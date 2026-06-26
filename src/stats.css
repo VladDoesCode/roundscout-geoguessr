@@ -170,6 +170,56 @@ body::before {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
+.support-card {
+  padding: 14px;
+  border: 1px solid rgba(255, 211, 61, 0.34);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(255, 211, 61, 0.1), rgba(124, 60, 255, 0.12)),
+    rgba(28, 18, 67, 0.62);
+}
+
+.support-card strong {
+  display: block;
+  margin: 5px 0 6px;
+  color: #fffaf0;
+  font-size: 13px;
+}
+
+.support-card p {
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.support-kicker {
+  color: var(--accent-warm);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.support-btn {
+  display: inline-flex;
+  justify-content: center;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 211, 61, 0.55);
+  border-radius: 8px;
+  background: rgba(255, 211, 61, 0.14);
+  color: var(--accent-warm);
+  font-size: 12px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.support-btn:hover {
+  background: rgba(255, 211, 61, 0.22);
+  color: #fffaf0;
+}
+
 .src-danger {
   color: #ff8ea3;
   border-color: rgba(255, 77, 109, 0.44);
