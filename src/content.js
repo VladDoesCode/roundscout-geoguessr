@@ -812,6 +812,31 @@
     return teams.find(team => mine(team) || team.isMe || team.isCurrentUser || (team.players || []).some(player => mine(player) || player.isMe || player.isCurrentUser)) || null;
   }
 
+  function teamPlayers(team) {
+    return Array.isArray(team?.players) ? team.players : [];
+  }
+
+  function teamHasMultiplePlayers(team) {
+    return teamPlayers(team).length > 1;
+  }
+
+  function ownPlayers(team) {
+    return teamPlayers(team).filter(player => mine(player) || player.isMe || player.isCurrentUser || player.isSelf || player.isLocalPlayer);
+  }
+
+  function guessPools(value) {
+    return [value?.guesses, value?.playerGuesses, value?.results, value?.roundResults].filter(Array.isArray);
+  }
+
+  function pushGuessPool(out, pool, index, mineOnly = false, currentOnly = false) {
+    if (!Array.isArray(pool)) return;
+    if (pool[index] && (!mineOnly || mine(pool[index]))) out.push(pool[index]);
+    if (currentOnly) return;
+    pool.forEach(item => {
+      if (item && (!mineOnly || mine(item))) out.push(item);
+    });
+  }
+
   function mineOwner(value) {
     return Boolean(value && (mine(value) || value.isMe || value.isCurrentUser || value.isSelf || value.isLocalPlayer || (value.players || []).some(player => mine(player) || player.isMe || player.isCurrentUser)));
   }
@@ -923,18 +948,14 @@
   }
 
   function guessDetailCandidates(round, teams, index) {
-    const out = [...roundGuesses(round)];
     const team = myTeam(teams);
+    const ownTeamMode = teamHasMultiplePlayers(team);
+    const out = ownTeamMode ? roundGuesses(round).filter(mine) : [...roundGuesses(round)];
     if (team) {
-      for (const pool of [team.guesses, team.playerGuesses, team.results, team.roundResults].filter(Array.isArray)) {
-        if (pool[index]) out.push(pool[index]);
-        pool.forEach(item => out.push(item));
-      }
-      for (const player of team.players || []) {
-        for (const pool of [player.guesses, player.playerGuesses, player.results, player.roundResults].filter(Array.isArray)) {
-          if (pool[index]) out.push(pool[index]);
-          pool.forEach(item => out.push(item));
-        }
+      for (const pool of guessPools(team)) pushGuessPool(out, pool, index, ownTeamMode, ownTeamMode);
+      const players = ownTeamMode ? ownPlayers(team) : teamPlayers(team);
+      for (const player of players) {
+        for (const pool of guessPools(player)) pushGuessPool(out, pool, index, false, ownTeamMode);
       }
     }
     const banked = duelState.guesses.get(index + 1);
@@ -970,11 +991,15 @@
 
   function rememberTeamGuesses(team) {
     if (!team) return;
-    const pools = [team.guesses, team.playerGuesses, team.results, team.roundResults].filter(Array.isArray);
-    for (const pool of pools) pool.forEach((guess, index) => rememberGuess(roundNo(guess, index + 1), guess));
-    for (const player of team.players || []) {
-      const playerPools = [player.guesses, player.playerGuesses, player.results, player.roundResults].filter(Array.isArray);
-      for (const pool of playerPools) pool.forEach((guess, index) => rememberGuess(roundNo(guess, index + 1), guess));
+    const ownTeamMode = teamHasMultiplePlayers(team);
+    for (const pool of guessPools(team)) {
+      pool.forEach((guess, index) => {
+        if (!ownTeamMode || mine(guess)) rememberGuess(roundNo(guess, index + 1), guess);
+      });
+    }
+    const players = ownTeamMode ? ownPlayers(team) : teamPlayers(team);
+    for (const player of players) {
+      for (const pool of guessPools(player)) pool.forEach((guess, index) => rememberGuess(roundNo(guess, index + 1), guess));
     }
   }
 
@@ -987,15 +1012,16 @@
       if (!value || typeof value !== "object") continue;
       const ownerRound = roundNo(value);
       if (mine(value) && guessReady(value)) rememberGuess(ownerRound, value);
+      if (teamHasMultiplePlayers(value) && mineOwner(value)) {
+        rememberTeamGuesses(value);
+        continue;
+      }
       if (!mineOwner(value)) continue;
-      for (const key of ["guesses", "playerGuesses", "results", "roundResults"]) {
-        const pool = value[key];
-        if (Array.isArray(pool)) {
-          pool.forEach((guess, index) => {
-            const fallbackRound = pool.length === 1 && ownerRound ? ownerRound : index + 1;
-            rememberGuess(roundNo(guess, fallbackRound), guess);
-          });
-        }
+      for (const pool of guessPools(value)) {
+        pool.forEach((guess, index) => {
+          const fallbackRound = pool.length === 1 && ownerRound ? ownerRound : index + 1;
+          rememberGuess(roundNo(guess, fallbackRound), guess);
+        });
       }
     }
   }
@@ -1008,7 +1034,7 @@
 
     const team = myTeam(teams);
     if (team) {
-      const fromTeam = teamGuess(team, index);
+      const fromTeam = teamGuess(team, index, { ownOnly: true });
       if (fromTeam) return mergeGuess(fromTeam, banked);
     }
 
@@ -1024,13 +1050,27 @@
     ].filter(Boolean);
   }
 
-  function teamGuess(team, index) {
+  function teamGuess(team, index, options = {}) {
     if (!team) return null;
-    const pools = [team.guesses, team.playerGuesses, team.results, team.roundResults].filter(Array.isArray);
-    for (const pool of pools) if (pool[index]) return pool[index];
-    for (const player of team.players || []) {
-      const playerPools = [player.guesses, player.playerGuesses, player.results, player.roundResults].filter(Array.isArray);
-      for (const pool of playerPools) if (pool[index]) return pool[index];
+    const ownOnly = Boolean(options.ownOnly);
+    const ownTeamMode = ownOnly && teamHasMultiplePlayers(team);
+
+    for (const player of ownPlayers(team)) {
+      for (const pool of guessPools(player)) if (pool[index]) return pool[index];
+    }
+
+    for (const pool of guessPools(team)) {
+      if (pool[index] && (!ownTeamMode || mine(pool[index]))) return pool[index];
+      if (ownTeamMode) {
+        const explicit = pool.find(item => mine(item) && roundNo(item, 0) === index + 1);
+        if (explicit) return explicit;
+      }
+    }
+
+    if (ownTeamMode) return null;
+
+    for (const player of teamPlayers(team)) {
+      for (const pool of guessPools(player)) if (pool[index]) return pool[index];
     }
     return null;
   }
