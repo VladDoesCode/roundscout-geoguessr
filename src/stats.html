@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RoundScout Dashboard</title>
+  <link rel="stylesheet" href="stats.css">
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="brand-header">
+        <div class="logo-pulse"></div>
+        <h1>Round<span>Scout</span></h1>
+      </div>
+
+      <nav class="nav-filters" aria-label="Stats filters">
+        <button class="nav-btn active" data-filter="all">All rounds</button>
+        <button class="nav-btn" data-filter="classic">Classic</button>
+        <button class="nav-btn" data-filter="duel">Duels</button>
+      </nav>
+
+      <div class="sidebar-actions">
+        <button id="export-btn" class="action-btn src-secondary">Export JSON</button>
+        <button id="import-btn" class="action-btn src-secondary">Import JSON</button>
+        <button id="clear-btn" class="action-btn src-danger">Clear all data</button>
+        <input type="file" id="file-input" hidden accept=".json,application/json">
+      </div>
+    </aside>
+
+    <main class="main-viewport">
+      <header class="viewport-header">
+        <div>
+          <p class="eyebrow">Post-round GeoGuessr intelligence</p>
+          <h2>What to study next</h2>
+        </div>
+        <div class="system-status">
+          <span class="pulse-indicator"></span>
+          Local storage sync active
+        </div>
+      </header>
+
+      <section class="metrics-grid" aria-label="Summary metrics">
+        <div class="metric-card" id="metric-total-rounds">
+          <span class="card-label">Saved rounds</span>
+          <h3 id="stat-total-rounds">0</h3>
+          <small>Long-term local history</small>
+        </div>
+        <div class="metric-card" id="metric-accuracy">
+          <span class="card-label">Country hit rate</span>
+          <h3 id="stat-accuracy">0.0%</h3>
+          <small id="stat-accuracy-sub">0 correct / 0 wrong</small>
+        </div>
+        <div class="metric-card" id="metric-distance">
+          <span class="card-label">Avg miss</span>
+          <h3 id="stat-avg-distance">0.0 mi</h3>
+          <small>Lower means better precision</small>
+        </div>
+        <div class="metric-card" id="metric-score">
+          <span class="card-label">Avg score</span>
+          <h3 id="stat-avg-score">0</h3>
+          <small>Out of 5,000 per round</small>
+        </div>
+        <div class="metric-card metric-duel-only" id="metric-duel-damage">
+          <span class="card-label">Duels base damage</span>
+          <h3 id="stat-avg-damage">N/A</h3>
+          <small>Positive means you outscored opponents</small>
+        </div>
+      </section>
+
+      <section class="split-card study-card">
+        <div class="card-header">
+          <div>
+            <p class="eyebrow">Highest EV</p>
+            <h3>Things I need to learn / study</h3>
+          </div>
+        </div>
+        <div id="study-plan-list" class="study-plan-list"></div>
+      </section>
+
+      <section class="dashboard-split">
+        <div class="split-card">
+          <div class="card-header">
+            <div>
+              <p class="eyebrow">Sorted by study EV</p>
+              <h3>Country performance</h3>
+            </div>
+          </div>
+          <div class="table-wrapper contained-table country-table">
+            <table id="matrix-table">
+              <thead>
+                <tr>
+                  <th data-sort="ev">Study EV</th>
+                  <th data-sort="country">Country</th>
+                  <th data-sort="rounds">Rounds</th>
+                  <th data-sort="accuracy">Hit rate</th>
+                  <th data-sort="distance">Avg miss</th>
+                  <th data-sort="damage">Avg damage</th>
+                  <th data-sort="region">Region hit</th>
+                </tr>
+              </thead>
+              <tbody id="matrix-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="split-card">
+          <div class="card-header">
+            <div>
+              <p class="eyebrow">Repeat leaks · sorted by weighted severity</p>
+              <h3>Common mix-ups</h3>
+            </div>
+          </div>
+          <div id="confusion-list" class="confusion-box contained-list"></div>
+        </div>
+      </section>
+
+      <section class="split-card timeline-card">
+        <div class="card-header">
+          <div>
+            <p class="eyebrow">Raw history</p>
+            <h3>Saved rounds</h3>
+          </div>
+        </div>
+        <div class="table-wrapper contained-table log-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Mode</th>
+                <th>Match / Round</th>
+                <th>Target</th>
+                <th>Your guess</th>
+                <th>Distance</th>
+                <th>Score</th>
+                <th>Base dmg</th>
+                <th>Remove</th>
+              </tr>
+            </thead>
+            <tbody id="log-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="stats.js"></script>
+</body>
+</html>

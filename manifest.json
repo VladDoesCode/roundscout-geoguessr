@@ -1,0 +1,63 @@
+{
+  "manifest_version": 3,
+  "name": "RoundScout for GeoGuessr",
+  "version": "1.10.45",
+  "description": "Private post-round GeoGuessr study overlay, round tracker, and learning dashboard.",
+  "permissions": [
+    "storage",
+    "unlimitedStorage"
+  ],
+  "host_permissions": [
+    "https://www.geoguessr.com/*",
+    "https://geoguessr.com/*",
+    "https://game-server.geoguessr.com/*",
+    "https://api.bigdatacloud.net/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "action": {
+    "default_title": "Open GeoGuessr Study Stats"
+  },
+  "options_page": "src/stats.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.geoguessr.com/*",
+        "https://geoguessr.com/*"
+      ],
+      "js": [
+        "src/page-probe.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://www.geoguessr.com/*",
+        "https://geoguessr.com/*"
+      ],
+      "js": [
+        "src/data.js",
+        "src/content.js"
+      ],
+      "css": [
+        "src/styles.css"
+      ],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/page-probe.js",
+        "src/stats.html"
+      ],
+      "matches": [
+        "https://www.geoguessr.com/*",
+        "https://geoguessr.com/*"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,224 @@
+#ggs-overlay-panel {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  width: 430px;
+  min-width: 330px;
+  min-height: 330px;
+  max-width: min(720px, calc(100vw - 24px));
+  max-height: calc(100vh - 32px);
+  background: rgba(18, 10, 43, 0.97);
+  border: 1px solid #4b3488;
+  border-radius: 10px;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.48);
+  color: #fffaf0;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  z-index: 999999;
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+  resize: both;
+  backdrop-filter: blur(10px);
+}
+
+.ggs-panel-titlebar {
+  background: linear-gradient(90deg, #21154f, #171032);
+  padding: 12px 14px;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #4b3488;
+  user-select: none;
+}
+
+.ggs-close-btn {
+  width: 28px;
+  height: 28px;
+  border: 1px solid #4b3488;
+  border-radius: 7px;
+  background: #171032;
+  color: #d8ceff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ggs-close-btn:hover {
+  color: #fff;
+  border-color: #ff4d6d;
+}
+
+.ggs-panel-body {
+  padding: 14px;
+  overflow: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.ggs-meta-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ggs-mode-badge {
+  background: rgba(156, 255, 63, 0.14);
+  color: #baff7a;
+  padding: 5px 9px;
+  border: 1px solid rgba(156, 255, 63, 0.45);
+  border-radius: 7px;
+  font-weight: 800;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.ggs-meta-header h2 {
+  margin: 0;
+  font-size: 22px;
+  color: #fffaf0;
+  letter-spacing: 0;
+}
+
+.ggs-stat-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ggs-stat-row div {
+  background: #211744;
+  border: 1px solid #3f2e74;
+  border-radius: 9px;
+  padding: 10px 8px;
+  color: #c4b8e6;
+  font-size: 11px;
+  text-align: center;
+}
+
+.ggs-stat-row strong {
+  display: block;
+  margin-top: 4px;
+  color: #9cff3f;
+  font-size: 15px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.ggs-round-details {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  background: #171032;
+  border: 1px solid #3f2e74;
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #e8defd;
+}
+
+.ggs-round-details div {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.ggs-round-details strong {
+  color: #fffaf0;
+}
+
+.ggs-round-details span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ggs-link {
+  color: #ffd84d;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.ggs-link:hover {
+  text-decoration: underline;
+}
+
+.ggs-tips-container {
+  background: #171032;
+  border: 1px solid #3f2e74;
+  border-radius: 9px;
+  padding: 12px;
+}
+
+.ggs-tips-container h3 {
+  font-size: 13px;
+  margin: 0 0 10px 0;
+  color: #fffaf0;
+}
+
+.ggs-tips-container ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #e8defd;
+}
+
+.ggs-tips-container li {
+  margin: 0 0 8px;
+  padding: 9px 10px;
+  background: #211744;
+  border: 1px solid #3f2e74;
+  border-radius: 8px;
+}
+
+.ggs-tip-target {
+  color: #9cff3f !important;
+  font-weight: 800;
+}
+
+.ggs-profile-import-btn {
+  margin-left: 15px;
+  background: linear-gradient(135deg, #5b21b6 0%, #84cc16 100%);
+  border: none;
+  color: white;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 6px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(21, 128, 61, 0.3);
+  transition: transform 0.2s ease, filter 0.2s ease;
+}
+
+.ggs-profile-import-btn:disabled {
+  background: #4b5563;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.ggs-profile-import-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.08);
+}
+
+@media (max-width: 520px) {
+  #ggs-overlay-panel {
+    left: 8px !important;
+    right: 8px;
+    top: 64px;
+    width: auto;
+  }
+
+  .ggs-round-details div {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
