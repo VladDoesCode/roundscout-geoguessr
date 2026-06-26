@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "RoundScout for GeoGuessr",
-  "version": "1.10.46",
+  "version": "1.10.47",
   "description": "Private post-round GeoGuessr study overlay, round tracker, and learning dashboard.",
   "permissions": [
     "storage",

@@ -1,5 +1,7 @@
 # RoundScout for GeoGuessr
 
+Free post-round GeoGuessr learning extension for beginners who want to understand their mistakes instead of just moving on to the next round.
+
 RoundScout is a free browser extension I built to make GeoGuessr easier to learn after each round.
 
 It does **not** help while you are guessing. It waits until GeoGuessr shows the answer, then opens a small study popup with the country, your guess, score, miss distance, region info, beginner-friendly country clues, and a link to Plonkit.
@@ -91,20 +93,9 @@ After a few games, open the stats dashboard. The most useful areas are:
 
 RoundScout is free. If it helps you learn GeoGuessr and you want to support the project, you can buy me a coffee here:
 
-[Buy me a coffee](https://www.buymeacoffee.com/VladDoesCode)
+[Buy me a coffee](https://buymeacoffee.com/vladvladvlad)
 
 No pressure at all. I made this because I wanted a better way to learn, and I hope it helps other people too.
-
-## Setting Up Your Own Donation Link
-
-If you fork this and want your own support link:
-
-1. Create an account at [Buy Me a Coffee](https://www.buymeacoffee.com/).
-2. Pick your username.
-3. Replace `VladDoesCode` in these files:
-   - `src/stats.html`
-   - `.github/FUNDING.yml`
-   - `README.md`
 
 ## Privacy
 
