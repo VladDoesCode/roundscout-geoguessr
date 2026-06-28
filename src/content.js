@@ -9,7 +9,7 @@
   const geoMemo = new Map();
   const guideMemo = new Map();
   const memoryStore = { ggStudyRounds: [] };
-  const duelState = { id: "", teams: null, rounds: null, guesses: new Map(), lastFetch: 0 };
+  const duelState = { id: "", teams: null, rounds: null, guesses: new Map(), completed: new Set(), lastFetch: 0, lastUpdate: 0, revealUntil: 0 };
   const classicState = { token: "", submissions: new Map(), latestSubmission: null, details: new Map(), fetching: new Map(), lastFetch: new Map() };
   const pageRequests = new Map();
   const capture = window.RoundScoutCapture;
@@ -384,11 +384,28 @@
     return /\/(multiplayer|duels?|team-duels)(\/|$)/i.test(p);
   }
 
+  function visibleControl(element) {
+    if (!element || element.disabled || element.getAttribute("aria-disabled") === "true" || element.getAttribute("aria-hidden") === "true") return false;
+    const style = getComputedStyle(element);
+    if (style.display === "none" || style.visibility === "hidden" || style.pointerEvents === "none" || Number(style.opacity) === 0) return false;
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 1 || rect.height <= 1) return false;
+    if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= innerHeight || rect.left >= innerWidth) return false;
+    const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return !top || top === element || element.contains(top);
+  }
+
+  function activeGuessVisible() {
+    return Array.from(document.querySelectorAll('[data-qa="perform-guess"], [data-testid*="guess" i], [class*="guess-button"], button'))
+      .filter(element => element.matches('[data-qa="perform-guess"], [data-testid*="guess" i], [class*="guess-button"]') || /^(?:make\s+)?guess(?:\s+now)?$/i.test(element.textContent.trim()))
+      .some(visibleControl);
+  }
+
   function resultVisible() {
     if (!gamePath()) return false;
 
     // Strict block: if guess button is on screen, round results are not active.
-    if (document.querySelector('[data-qa="perform-guess"]') || document.querySelector('[class*="guess-button"]')) {
+    if (activeGuessVisible()) {
       return false;
     }
 
@@ -470,19 +487,30 @@
   }
 
   function score(value) {
-    return n(value?.score, value?.points, value?.roundScore, value?.scoreInPoints, value?.roundScoreInPoints, value?.guessScoreInPoints);
+    return n(
+      value?.score,
+      value?.points,
+      value?.roundScore,
+      value?.scoreInPoints,
+      value?.roundScoreInPoints,
+      value?.guessScoreInPoints,
+      value?.result?.score,
+      value?.guess?.score
+    );
   }
 
   function hasScore(value) {
     if (!value || typeof value !== "object") return false;
-    if (value.noGuess || value.noGuessMade || value.didNotGuess || value.timedOut || value.timedout) return true;
+    if (value.noGuess || value.isNoGuess || value.noGuessMade || value.didNotGuess || value.hasGuess === false || value.timedOut || value.timedout || value.isTimedOut) return true;
     return [
       value.score,
       value.points,
       value.roundScore,
       value.scoreInPoints,
       value.roundScoreInPoints,
-      value.guessScoreInPoints
+      value.guessScoreInPoints,
+      value.result?.score,
+      value.guess?.score
     ].some(item => Number.isFinite(Number(item)));
   }
 
@@ -494,12 +522,42 @@
       value.roundScore,
       value.scoreInPoints,
       value.roundScoreInPoints,
-      value.guessScoreInPoints
+      value.guessScoreInPoints,
+      value.result?.score,
+      value.guess?.score
     ].some(item => Number.isFinite(Number(item)));
   }
 
   function distance(value) {
-    return n(value?.distanceInMeters, value?.distanceMeters, value?.distanceInMetres, value?.distance, value?.guess?.distanceInMeters, value?.result?.distanceInMeters);
+    return n(
+      value?.distanceInMeters,
+      value?.distanceMeters,
+      value?.distanceInMetres,
+      typeof value?.distance === "number" ? value.distance : undefined,
+      value?.distance?.meters,
+      value?.distance?.amount,
+      value?.distance?.value,
+      value?.guess?.distanceInMeters,
+      value?.result?.distanceInMeters,
+      value?.result?.distance?.meters
+    );
+  }
+
+  function hasDistance(value) {
+    if (!value || typeof value !== "object") return false;
+    const values = [
+      value.distanceInMeters,
+      value.distanceMeters,
+      value.distanceInMetres,
+      typeof value.distance === "number" ? value.distance : undefined,
+      value.distance?.meters,
+      value.distance?.amount,
+      value.distance?.value,
+      value.guess?.distanceInMeters,
+      value.result?.distanceInMeters,
+      value.result?.distance?.meters
+    ];
+    return values.some(item => Number.isFinite(Number(item)));
   }
 
   function code(value) {
@@ -607,6 +665,13 @@
       .filter(candidate => candidate.code && candidate.priority <= 2)
       .sort((a, b) => a.priority - b.priority)[0];
     if (trustedCode && canUseCodeOnly) return trustedCode;
+
+    if (!guessedPoint || reportedDistance == null) {
+      const fallbackPoint = candidates
+        .filter(candidate => candidate.point)
+        .sort((a, b) => a.priority - b.priority)[0];
+      if (fallbackPoint) return fallbackPoint;
+    }
 
     return { code: "", point: null };
   }
@@ -1061,6 +1126,17 @@
     return teamPlayers(team).filter(player => mine(player) || player.isMe || player.isCurrentUser || player.isSelf || player.isLocalPlayer);
   }
 
+  function playerPinGuess(player, fallbackRound = 0) {
+    const pin = player?.pin || player?.guessPin || player?.currentGuess?.pin || player?.currentGuess;
+    if (!pin || !guessCoords(pin)) return null;
+    return {
+      ...pin,
+      playerId: player.playerId || player.userId || player.id,
+      userId: player.userId,
+      roundNumber: roundNo(pin, fallbackRound)
+    };
+  }
+
   function guessPools(value) {
     return [value?.guesses, value?.playerGuesses, value?.results, value?.roundResults].filter(Array.isArray);
   }
@@ -1134,7 +1210,8 @@
 
   function noGuess(value) {
     return Boolean(value && (
-      value.noGuess || value.noGuessMade || value.didNotGuess || value.timedOut || value.timedout
+      value.noGuess || value.isNoGuess || value.noGuessMade || value.didNotGuess ||
+      value.hasGuess === false || value.timedOut || value.timedout || value.isTimedOut
     ));
   }
 
@@ -1178,7 +1255,10 @@
     duelState.teams = null;
     duelState.rounds = null;
     duelState.guesses = new Map();
+    duelState.completed = new Set();
     duelState.lastFetch = 0;
+    duelState.lastUpdate = 0;
+    duelState.revealUntil = 0;
   }
 
   function getActiveGameId() {
@@ -1267,6 +1347,9 @@
       const players = ownTeamMode ? ownPlayers(team) : teamPlayers(team);
       for (const player of players) {
         for (const pool of guessPools(player)) pushGuessPool(out, pool, index, false, ownTeamMode);
+        const pin = playerPinGuess(player, 0);
+        const pinRound = roundNo(pin, 0);
+        if (pin && (pinRound ? pinRound === index + 1 : index === (duelState.rounds?.length || 1) - 1)) out.push(pin);
       }
     }
     const banked = duelState.guesses.get(index + 1);
@@ -1311,6 +1394,8 @@
     const players = ownTeamMode ? ownPlayers(team) : teamPlayers(team);
     for (const player of players) {
       for (const pool of guessPools(player)) pool.forEach((guess, index) => rememberGuess(roundNo(guess, index + 1), guess));
+      const pin = playerPinGuess(player, duelState.rounds?.length || 1);
+      if (pin) rememberGuess(roundNo(pin, duelState.rounds?.length || 1), pin);
     }
   }
 
@@ -1421,6 +1506,7 @@
     }
 
     let latest = null;
+    let newlyResolved = null;
     for (let i = 0; i < activeRounds.length; i += 1) {
       const round = activeRounds[i];
       if (!round) continue;
@@ -1429,11 +1515,11 @@
       
       const guess = enrichGuess(guessFor(round, state, activeTeams, i), round, activeTeams, i);
       if (!guess) continue;
-      if (!hasScore(guess) && !distance(guess)) continue;
+      if (!hasScore(guess) && !hasDistance(guess)) continue;
       const playerGuess = guess;
       
       const guessedPoint = guessCoords(playerGuess);
-      const reportedDistance = distance(playerGuess);
+      const reportedDistance = hasDistance(playerGuess) ? distance(playerGuess) : null;
       const target = duelTarget(round, guessedPoint, reportedDistance);
       const actualPoint = target.point;
       const actualMeta = await geoMeta(actualPoint);
@@ -1445,11 +1531,12 @@
       if (!guessed && !playerGuess.noGuess) {
         guessed = guessedMeta.countryCode;
       }
+      if (!guessed && !noGuess(playerGuess)) continue;
       
       const baseDamage = getRoundDamage(round, activeTeams, i, playerGuess);
       const dist = reportedDistance || metersBetween(actualPoint, guessedPoint);
       
-      latest = await save({
+      const saved = await save({
         gameId: activeId,
         roundNumber,
         mode: "duel",
@@ -1461,11 +1548,20 @@
         score: score(playerGuess),
         damage: baseDamage
       });
+      if (!saved) continue;
+      latest = saved;
+      const resolvedKey = `${activeId}_${roundNumber}`;
+      if (!duelState.completed.has(resolvedKey)) {
+        duelState.completed.add(resolvedKey);
+        newlyResolved = saved;
+      }
     }
     
-    if (latest && resultVisible()) {
-      show(latest);
+    if (newlyResolved && !activeGuessVisible()) {
+      duelState.revealUntil = Date.now() + 15000;
+      show(newlyResolved);
     }
+    else if (latest && resultVisible()) show(latest);
     return latest;
   }
 
@@ -1533,6 +1629,7 @@
     }
     rememberTeamGuesses(myTeam(duelState.teams));
     rememberLooseGuesses(root);
+    if (fragments.teams.length || fragments.rounds.length || snapshots.length) duelState.lastUpdate = Date.now();
   }
 
   async function processPayload(payload, replay = false) {
@@ -1657,18 +1754,21 @@
       return;
     }
 
-    if (!resultVisible()) {
+    const result = resultVisible();
+    const duelGrace = duelPath() && Date.now() < duelState.revealUntil && !activeGuessVisible();
+    if (duelPath()) {
+      const id = getActiveGameId();
+      if (!id) discoverOngoingDuel();
+      if (id && (!duelState.teams || !duelState.rounds || ((result || duelGrace) && Date.now() - duelState.lastFetch > 1800))) {
+        fetchDuelState(id);
+      }
+      if ((result || duelGrace) && duelState.teams && duelState.rounds) processDuel(duelState);
+    }
+
+    if (!result && !duelGrace) {
       const el = document.getElementById("ggs-overlay-panel");
       if (el) el.style.display = "none";
       return;
-    }
-
-    if (duelPath()) {
-      const id = getActiveGameId();
-      discoverOngoingDuel();
-      if (id && (!duelState.teams || !duelState.rounds || Date.now() - duelState.lastFetch > 2500)) {
-        fetchDuelState(id);
-      }
     }
 
     if (Date.now() - replayAt > 1000) {

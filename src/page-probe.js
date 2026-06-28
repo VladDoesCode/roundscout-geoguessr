@@ -47,11 +47,18 @@
     return out;
   }
 
-  function flatten(value, out) {
-    if (!value || typeof value !== "object") return;
+  function flatten(value, out, depth = 0) {
+    if (depth > 6 || value == null) return;
+    if (typeof value === "string") {
+      const text = value.trim();
+      if (text[0] !== "{" && text[0] !== "[") return;
+      try { flatten(JSON.parse(text), out, depth + 1); } catch (e) {}
+      return;
+    }
+    if (typeof value !== "object") return;
     out.push(value);
-    if (Array.isArray(value)) value.forEach(item => flatten(item, out));
-    else if (Array.isArray(value.arguments)) value.arguments.forEach(item => flatten(item, out));
+    if (Array.isArray(value)) value.forEach(item => flatten(item, out, depth + 1));
+    else if (Array.isArray(value.arguments)) value.arguments.forEach(item => flatten(item, out, depth + 1));
   }
 
   function inspect(url, raw, direction = "response", method = "") {
@@ -150,14 +157,23 @@
     const nativeAdd = NativeWebSocket.prototype.addEventListener;
     const nativeOnMessage = Object.getOwnPropertyDescriptor(NativeWebSocket.prototype, "onmessage");
 
+    const inspectedEvents = new WeakSet();
+
+    function inspectSocketData(socket, event, data) {
+      if (event && inspectedEvents.has(event)) return;
+      if (event) inspectedEvents.add(event);
+      const url = socket?.url || "websocket";
+      if (typeof data === "string") inspect(url, data);
+      else if (data instanceof Blob) data.text().then(text => inspect(url, text)).catch(() => {});
+      else if (data instanceof ArrayBuffer) inspect(url, new TextDecoder("utf-8").decode(data));
+      else if (ArrayBuffer.isView(data)) inspect(url, new TextDecoder("utf-8").decode(data));
+    }
+
     function observe(socket) {
       if (!socket || socket.__ggStudyObserved) return;
       try { Object.defineProperty(socket, "__ggStudyObserved", { value: true }); } catch (e) { socket.__ggStudyObserved = true; }
       nativeAdd.call(socket, "message", event => {
-        const data = event.data;
-        if (typeof data === "string") inspect(socket.url || "websocket", data);
-        else if (data instanceof Blob) data.text().then(text => inspect(socket.url || "websocket", text)).catch(() => {});
-        else if (data instanceof ArrayBuffer) inspect(socket.url || "websocket", new TextDecoder("utf-8").decode(data));
+        inspectSocketData(socket, event, event.data);
       });
     }
 
@@ -176,6 +192,22 @@
         else this.__ggStudyOnMessage = handler;
       }
     });
+
+    const NativeMessageEvent = window.MessageEvent;
+    const nativeData = NativeMessageEvent?.prototype && Object.getOwnPropertyDescriptor(NativeMessageEvent.prototype, "data");
+    if (nativeData?.get && nativeData.configurable && !window.__ggStudyMessageDataPatched) {
+      window.__ggStudyMessageDataPatched = true;
+      Object.defineProperty(NativeMessageEvent.prototype, "data", {
+        configurable: true,
+        enumerable: nativeData.enumerable,
+        get() {
+          const data = nativeData.get.call(this);
+          const socket = this.currentTarget || this.target;
+          if (socket instanceof NativeWebSocket) inspectSocketData(socket, this, data);
+          return data;
+        }
+      });
+    }
   }
 
   const NativeEventSource = window.EventSource;

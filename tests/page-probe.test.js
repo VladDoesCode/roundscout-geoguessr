@@ -14,8 +14,21 @@ function loadProbe() {
   };
 
   class MockTransport {
+    constructor() { this.url = "wss://game-server.geoguessr.com/hub"; }
     addEventListener() {}
   }
+  class MockMessageEvent {
+    constructor(data, target) {
+      this._data = data;
+      this.target = target;
+      this.currentTarget = target;
+    }
+  }
+  Object.defineProperty(MockMessageEvent.prototype, "data", {
+    configurable: true,
+    enumerable: true,
+    get() { return this._data; }
+  });
   class MockXHR extends MockTransport {
     open() {}
     send() {}
@@ -27,6 +40,7 @@ function loadProbe() {
     XMLHttpRequest: MockXHR,
     WebSocket: MockTransport,
     EventSource: MockTransport,
+    MessageEvent: MockMessageEvent,
     addEventListener(type, handler) { listeners.set(type, handler); },
     postMessage(data) { messages.push(data); }
   };
@@ -77,4 +91,17 @@ test("page probe performs authenticated result reads in the page session", async
   const result = probe.messages.find(item => item.source === "GG_STUDY_FETCH_RESULT");
   assert.equal(result.ok, true);
   assert.equal(result.payload.gameId, "duel-1");
+});
+
+test("page probe sees Duel messages when the app reads MessageEvent.data directly", () => {
+  const probe = loadProbe();
+  const socket = new probe.window.WebSocket();
+  const nested = JSON.stringify({ code: "DuelRoundFinished", gameId: "duel-2", duel: { state: { teams: [], rounds: [] } } });
+  const event = new probe.window.MessageEvent(JSON.stringify({ type: 1, arguments: [nested] }) + "\x1e", socket);
+
+  void event.data;
+
+  const result = probe.messages.find(item => item.source === "GG_STUDY_PROBE" && item.payload?.code === "DuelRoundFinished");
+  assert.equal(result.payload.gameId, "duel-2");
+  assert.equal(Object.prototype.hasOwnProperty.call(probe.window.WebSocket.prototype, "send"), false);
 });

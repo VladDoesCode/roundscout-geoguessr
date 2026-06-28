@@ -48,3 +48,27 @@ test("Duel capture rejects fragments from a stale match", () => {
   assert.deepEqual(result.teams, []);
   assert.equal(result.id, "");
 });
+
+test("Duel capture preserves separately stored round score and player pin", () => {
+  const result = capture.collectDuelFragments({
+    gameId: "duel-live",
+    teams: [{
+      players: [{ playerId: "me", pin: { lat: 41.01, lng: 28.97 } }],
+      roundResults: [{ roundNumber: 1, score: 4200 }]
+    }],
+    rounds: [{ roundNumber: 1, panorama: { lat: 40.9, lng: 29.1 } }]
+  }, "duel-live");
+
+  assert.equal(result.teams[0][0].players[0].pin.lat, 41.01);
+  assert.equal(result.teams[0][0].roundResults[0].score, 4200);
+  assert.equal(result.rounds[0][0].panorama.lng, 29.1);
+});
+
+test("Duel payload driver does not leak fragment locals into another function", () => {
+  const fs = require("node:fs");
+  const source = fs.readFileSync("src/content.js", "utf8");
+  const start = source.indexOf("async function processPayload");
+  const end = source.indexOf("async function syncClassicHistory", start);
+  const body = source.slice(start, end);
+  assert.doesNotMatch(body, /\b(?:fragments|snapshots)\b/);
+});
