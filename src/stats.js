@@ -577,6 +577,8 @@
   }
 
   function countryTopic(code) {
+    const structured = window.GG_STUDY_CLUE_ENGINE?.countryFocusText(code);
+    if (structured) return structured;
     if (isBalkan(code)) return "Balkan scripts, bollards, plates, utility poles, and mountain/coastal landscape splits";
     if (isBaltic(code)) return "Baltic language endings, road signs, flat landscapes, and pole differences";
     if (isEurope(code)) return "European bollards, plates, road lines, sign colors, and language separators";
@@ -588,6 +590,8 @@
   }
 
   function pairTopic(actual, guessed) {
+    const structured = window.GG_STUDY_CLUE_ENGINE?.pairFocusText(actual, guessed);
+    if (structured) return structured;
     const pair = [actual, guessed];
     if (pair.every(isBalkan)) return "Learn Balkan separators: Cyrillic vs Latin scripts, bollards, plates, roofs, and mountain road feel.";
     if (pair.every(isBaltic)) return "Learn Baltic separators: language endings, flat roads, signs, poles, and coastal/forest feel.";

@@ -7,6 +7,7 @@
   const me = { id: "", name: "" };
   const cache = [];
   const geoMemo = new Map();
+  const guideMemo = new Map();
   const memoryStore = { ggStudyRounds: [] };
   const duelState = { id: "", teams: null, rounds: null, guesses: new Map(), lastFetch: 0 };
   const savedFingerprints = new Map();
@@ -16,6 +17,7 @@
   let replayAt = 0;
   let meLoading = false;
   let duelStateLoading = false;
+  let visualRenderToken = 0;
 
   const countryDisplay = (() => {
     try { return new Intl.DisplayNames(["en"], { type: "region" }); } catch (e) { return null; }
@@ -98,10 +100,24 @@
           <div>Result<strong id="ggs-stat-acc">-</strong></div>
         </div>
         <div id="ggs-round-details" class="ggs-round-details"></div>
-        <div class="ggs-tips-container">
-          <h3>Country Meta & Tips</h3>
+        <section class="ggs-visual-debrief" aria-labelledby="ggs-visual-title">
+          <div class="ggs-section-heading">
+            <div>
+              <span class="ggs-eyebrow">Visual debrief</span>
+              <h3 id="ggs-visual-title">Why this location fits</h3>
+            </div>
+            <a id="ggs-guide-link" class="ggs-source-button" href="#" target="_blank" rel="noopener noreferrer">Full guide</a>
+          </div>
+          <p id="ggs-visual-context" class="ggs-visual-context"></p>
+          <div id="ggs-visual-cards" class="ggs-visual-cards" aria-live="polite">
+            <div class="ggs-visual-loading"><span></span><span></span><span></span></div>
+          </div>
+          <div id="ggs-takeaway" class="ggs-takeaway"></div>
+        </section>
+        <details class="ggs-tips-container">
+          <summary>More beginner clues</summary>
           <ul id="ggs-tips-list"><li>Waiting for round result...</li></ul>
-        </div>
+        </details>
       </div>`;
     document.body.appendChild(el);
     document.getElementById("ggs-close-panel-btn").addEventListener("click", () => {
@@ -156,13 +172,136 @@
     const code = cc(round.actualCode);
     const tips = document.getElementById("ggs-tips-list");
     if (!tips) return;
-    tips.innerHTML = `<li class="ggs-tip-target">Target: ${countryName(code)}${code ? ` (${code})` : ""}</li>`;
-    const meta = window.GG_STUDY_COUNTRIES?.find(c => c.code === code);
-    (meta?.tips?.length ? meta.tips : ["No targeted country notes available for this region."]).forEach(tip => {
+    tips.innerHTML = "";
+    const localClues = window.GG_STUDY_CLUE_ENGINE?.localClues(code, guessedCode, 5) || [];
+    const fallbackTips = window.GG_STUDY_COUNTRIES?.find(c => c.code === code)?.tips || [];
+    const tipItems = localClues.length ? localClues.map(clue => clue.text) : fallbackTips;
+    (tipItems.length ? tipItems : ["No targeted country notes are available yet."]).forEach(tip => {
       const li = document.createElement("li");
       li.textContent = tip;
-      li.style.marginBottom = "4px";
       tips.appendChild(li);
+    });
+    renderVisualDebrief(round, nextFingerprint);
+  }
+
+  function countryProfile(code) {
+    return window.GG_STUDY_CLUE_ENGINE?.profile(code) || window.GG_STUDY_COUNTRIES?.find(country => country.code === cc(code)) || null;
+  }
+
+  async function fetchVisualGuide(code) {
+    const profile = countryProfile(code);
+    if (!profile?.slug) return null;
+    if (guideMemo.has(profile.slug)) return guideMemo.get(profile.slug);
+    const pending = sendMessage({ type: "FETCH_PLONKIT_GUIDE", slug: profile.slug })
+      .then(response => response?.ok ? response.data : null)
+      .catch(() => null);
+    guideMemo.set(profile.slug, pending);
+    const guide = await pending;
+    if (guide) guideMemo.set(profile.slug, guide);
+    else guideMemo.delete(profile.slug);
+    return guide;
+  }
+
+  async function renderVisualDebrief(round, fingerprint) {
+    const token = ++visualRenderToken;
+    const actual = cc(round.actualCode);
+    const guessed = cc(round.guessedCode);
+    const cardsRoot = document.getElementById("ggs-visual-cards");
+    const context = document.getElementById("ggs-visual-context");
+    const title = document.getElementById("ggs-visual-title");
+    const takeaway = document.getElementById("ggs-takeaway");
+    const guideLink = document.getElementById("ggs-guide-link");
+    if (!cardsRoot || !actual) return;
+    const pairKey = `${actual}|${guessed || "NO_GUESS"}`;
+    if (cardsRoot.dataset.pairKey === pairKey && cardsRoot.dataset.ready === "true") return;
+    cardsRoot.dataset.pairKey = pairKey;
+    cardsRoot.dataset.ready = "false";
+
+    title.textContent = guessed && guessed !== actual
+      ? `${countryName(actual)} vs ${countryName(guessed)}`
+      : `Recognizing ${countryName(actual)}`;
+    context.textContent = guessed && guessed !== actual
+      ? `Matched visual clues for the exact country pair from this round.`
+      : `The strongest visual clues to make this country easier next time.`;
+    cardsRoot.innerHTML = `<div class="ggs-visual-loading" aria-label="Loading matched visual clues"><span></span><span></span><span></span></div>`;
+    takeaway.textContent = "Building your visual lesson...";
+    const profile = countryProfile(actual);
+    guideLink.href = profile?.plonkit || plonkitUrl(actual);
+
+    const [actualGuide, guessedGuide] = await Promise.all([
+      fetchVisualGuide(actual),
+      guessed && guessed !== actual ? fetchVisualGuide(guessed) : Promise.resolve(null)
+    ]);
+    if (token !== visualRenderToken || fingerprint !== lastShownFingerprint) return;
+
+    const engine = window.GG_STUDY_CLUE_ENGINE;
+    const lesson = engine?.buildLesson(actual, guessed, actualGuide, guessedGuide);
+    if (!lesson) {
+      cardsRoot.innerHTML = `<div class="ggs-visual-empty">Visual guide unavailable. The beginner clues below are still matched to ${escapeHtml(countryName(actual))}.</div>`;
+      cardsRoot.dataset.ready = "true";
+      takeaway.textContent = studyFocus(round);
+      return;
+    }
+
+    guideLink.href = lesson.sourceUrl || guideLink.href;
+    cardsRoot.innerHTML = lesson.cards.map(card => renderLessonCard(card, actual, guessed)).join("");
+    if (!cardsRoot.innerHTML) {
+      cardsRoot.innerHTML = `<div class="ggs-visual-empty">No visual clue is available for this guide yet.</div>`;
+    }
+    takeaway.innerHTML = `<strong>Remember this</strong><span>${escapeHtml(lesson.takeaway)}</span>`;
+    cardsRoot.dataset.ready = "true";
+    bindVisualFallbacks(cardsRoot);
+  }
+
+  function renderLessonCard(card, actual, guessed) {
+    const type = escapeHtml(card.title || window.GG_STUDY_CLUE_ENGINE?.typeLabel(card.type) || "High-value clue");
+    if (card.kind === "compare" && card.guessed) {
+      return `
+        <article class="ggs-clue-card ggs-clue-compare">
+          <div class="ggs-clue-card-header"><span>${type}</span><small>Compare the evidence</small></div>
+          <div class="ggs-comparison-grid">
+            ${renderClueSide(card.actual, actual, "Target")}
+            ${renderClueSide(card.guessed, guessed, "Your guess")}
+          </div>
+        </article>`;
+    }
+    return `
+      <article class="ggs-clue-card ggs-clue-target">
+        <div class="ggs-clue-card-header"><span>${type}</span><small>Look for this</small></div>
+        ${renderClueSide(card.actual, actual, "Target")}
+      </article>`;
+  }
+
+  function renderClueSide(clue, code, role) {
+    const image = clue?.imageUrl
+      ? `<a class="ggs-clue-image" href="${escapeAttr(clue.imageLink || clue.sourceUrl || plonkitUrl(code))}" target="_blank" rel="noopener noreferrer"><img src="${escapeAttr(clue.imageUrl)}" alt="${escapeAttr(`${clue.title || "GeoGuessr clue"} for ${countryName(code)}`)}" loading="eager" decoding="async" referrerpolicy="no-referrer"><span>Open source image</span></a>`
+      : `<a class="ggs-clue-image ggs-clue-image-missing" href="${escapeAttr(clue?.sourceUrl || plonkitUrl(code))}" target="_blank" rel="noopener noreferrer"><span>Open visual source</span></a>`;
+    return `
+      <div class="ggs-clue-side">
+        ${image}
+        <div class="ggs-clue-copy">
+          <div class="ggs-country-label"><span>${escapeHtml(role)}</span>${flagImg(code)}<strong>${escapeHtml(countryName(code))}</strong></div>
+          <p>${escapeHtml(shortClueText(clue?.text))}</p>
+          <a href="${escapeAttr(clue?.sourceUrl || plonkitUrl(code))}" target="_blank" rel="noopener noreferrer">${escapeHtml(clue?.sourceLabel || "Open source")}</a>
+        </div>
+      </div>`;
+  }
+
+  function shortClueText(value) {
+    const text = String(value || "Visual example from the country guide.").trim();
+    if (text.length <= 220) return text;
+    const cut = text.slice(0, 217).replace(/\s+\S*$/, "");
+    return `${cut}...`;
+  }
+
+  function bindVisualFallbacks(root) {
+    root.querySelectorAll(".ggs-clue-image img").forEach(img => {
+      img.addEventListener("error", () => {
+        const link = img.closest(".ggs-clue-image");
+        if (!link) return;
+        link.classList.add("ggs-clue-image-missing");
+        img.remove();
+      }, { once: true });
     });
   }
 
@@ -214,7 +353,8 @@
   }
 
   function plonkitUrl(code) {
-    return `https://www.plonkit.net/${countryName(code).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+    const profile = countryProfile(code);
+    return profile?.plonkit || `https://www.plonkit.net/${countryName(code).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
   }
 
   function escapeHtml(value) {

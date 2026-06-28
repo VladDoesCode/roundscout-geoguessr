@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "RoundScout for GeoGuessr",
-  "version": "1.10.48",
-  "description": "Private post-round GeoGuessr study overlay, round tracker, and learning dashboard.",
+  "version": "1.11.0",
+  "description": "Post-round GeoGuessr visual coach, round tracker, and personalized learning dashboard.",
   "permissions": [
     "storage",
     "unlimitedStorage"
@@ -11,7 +11,9 @@
     "https://www.geoguessr.com/*",
     "https://geoguessr.com/*",
     "https://game-server.geoguessr.com/*",
-    "https://api.bigdatacloud.net/*"
+    "https://api.bigdatacloud.net/*",
+    "https://www.plonkit.net/*",
+    "https://upload.wikimedia.org/*"
   ],
   "background": {
     "service_worker": "src/background.js"
@@ -39,6 +41,7 @@
       ],
       "js": [
         "src/data.js",
+        "src/clues.js",
         "src/content.js"
       ],
       "css": [

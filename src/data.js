@@ -1115,7 +1115,7 @@
     aliases[alias.toLowerCase()] = code;
   }
 
-  window.GG_STUDY_DATA_VERSION = "2026-06-26";
+  window.GG_STUDY_DATA_VERSION = "2026-06-28";
   window.GG_STUDY_COUNTRIES = countries;
   window.GG_STUDY_COUNTRY_ALIASES = aliases;
 })();

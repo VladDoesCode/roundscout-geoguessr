@@ -4,7 +4,7 @@ Free post-round GeoGuessr learning extension for beginners who want to understan
 
 RoundScout is a free browser extension I built to make GeoGuessr easier to learn after each round.
 
-It does **not** help while you are guessing. It waits until GeoGuessr shows the answer, then opens a small study popup with the country, your guess, score, miss distance, region info, beginner-friendly country clues, and a link to Plonkit.
+It does **not** help while you are guessing. It waits until GeoGuessr shows the answer, then opens a small study popup with the country, your guess, score, miss distance, region info, and a visual lesson for the exact country pair.
 
 It also saves your rounds locally so you can see what you keep missing and what is actually worth studying next.
 
@@ -46,7 +46,9 @@ You can drag and resize it, close it, or open the full stats page.
 - Post-round study popup for Classic and Duels.
 - Country detection after the answer is revealed.
 - Saved round history with target country, guessed country, score, distance, regions, and Duel base damage.
-- Beginner-friendly country meta and tips.
+- Pair-specific visual debriefs that compare the target with your guess.
+- Structured beginner clues for language, driving side, plates, road markings, signs, bollards, utility poles, Google car, architecture, and landscape.
+- Matched guide images: every image stays attached to the clue it actually explains.
 - Plonkit links for deeper learning.
 - Country performance breakdown.
 - Repeat mix-ups, like "Australia guessed as Kenya".
@@ -80,7 +82,9 @@ The stats page opens from the extension icon or from the popup.
 
 Play GeoGuessr like normal.
 
-After a round ends, RoundScout opens a small popup. Read the quick country tips, compare your guess with the actual answer, and move on.
+After a round ends, RoundScout opens a small popup. Start with the visual debrief: it prioritizes the clue categories that best separate the target from your guess. Expand **More beginner clues** when you want extra context.
+
+Visual examples are loaded from the matching public Plonkit country guide, cached locally for faster repeat lessons, and linked back to their source. RoundScout does not bundle Plonkit's image library. Israel, which currently has no Plonkit guide, uses clearly attributed freely licensed Wikimedia Commons examples.
 
 After a few games, open the stats dashboard. The most useful areas are:
 
@@ -101,11 +105,15 @@ No pressure at all. I made this because I wanted a better way to learn, and I ho
 
 RoundScout stores saved rounds with `chrome.storage.local`. That means the data stays in your browser unless you export it.
 
+To identify countries and regions, RoundScout sends revealed round coordinates to BigDataCloud's public reverse-geocoding endpoint. Visual debriefs request the public Plonkit pages for the target country and, when useful, the country you guessed. These requests do not include your GeoGuessr account, saved history, score, or personal stats.
+
 If you uninstall the extension, browser extension storage may be removed too. Use **Export JSON** if you want a backup.
 
 ## Development
 
 No build step is needed.
+
+Run `npm test` to check the clue engine, image/text matching, country coverage, and manifest. Run `npm run preview`, then open `http://127.0.0.1:8765/tests/visual-debrief.html`, to inspect the visual debrief without starting a GeoGuessr game.
 
 After editing files:
 
@@ -120,5 +128,7 @@ After editing files:
 - `src/content.js` - popup, round tracking, saving logic.
 - `src/background.js` - extension messages and storage merge.
 - `src/data.js` - country tips.
+- `src/clues.js` - structured clue categories and pair-specific lesson ranking.
+- `src/guide-parser.js` - extracts matched visual clue previews from public guide pages.
 - `src/stats.html`, `src/stats.css`, `src/stats.js` - stats dashboard.
 - `src/styles.css` - popup styling.

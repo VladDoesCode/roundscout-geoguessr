@@ -2,11 +2,11 @@
   position: fixed;
   top: 80px;
   right: 20px;
-  width: 430px;
-  min-width: 330px;
-  min-height: 330px;
-  max-width: min(720px, calc(100vw - 24px));
-  max-height: calc(100vh - 32px);
+  width: 560px;
+  min-width: 360px;
+  min-height: 420px;
+  max-width: min(860px, calc(100vw - 24px));
+  max-height: calc(100vh - 96px);
   background: rgba(18, 10, 43, 0.97);
   border: 1px solid #4b3488;
   border-radius: 10px;
@@ -19,6 +19,7 @@
   overflow: hidden;
   resize: both;
   backdrop-filter: blur(10px);
+  container-type: inline-size;
 }
 
 .ggs-panel-titlebar {
@@ -56,6 +57,7 @@
   padding: 14px;
   overflow: auto;
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -149,6 +151,7 @@
   text-decoration: underline;
 }
 
+.ggs-visual-debrief,
 .ggs-tips-container {
   background: #171032;
   border: 1px solid #3f2e74;
@@ -156,10 +159,259 @@
   padding: 12px;
 }
 
-.ggs-tips-container h3 {
-  font-size: 13px;
-  margin: 0 0 10px 0;
+.ggs-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ggs-section-heading h3 {
+  margin: 2px 0 0;
+  font-size: 16px;
   color: #fffaf0;
+  line-height: 1.25;
+}
+
+.ggs-eyebrow {
+  color: #9cff3f;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ggs-source-button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 9px;
+  border: 1px solid rgba(255, 216, 77, 0.42);
+  border-radius: 7px;
+  color: #ffd84d;
+  background: rgba(255, 216, 77, 0.08);
+  font-size: 10px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.ggs-source-button:hover {
+  background: rgba(255, 216, 77, 0.15);
+}
+
+.ggs-visual-context {
+  margin: 7px 0 12px;
+  color: #b9addd;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.ggs-visual-cards {
+  display: grid;
+  gap: 11px;
+}
+
+.ggs-clue-card {
+  overflow: hidden;
+  border: 1px solid #473481;
+  border-radius: 9px;
+  background: #211744;
+}
+
+.ggs-clue-card-header {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #3f2e74;
+}
+
+.ggs-clue-card-header span {
+  color: #fffaf0;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.ggs-clue-card-header small {
+  color: #a99dcc;
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.ggs-comparison-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ggs-comparison-grid .ggs-clue-side + .ggs-clue-side {
+  border-left: 1px solid #3f2e74;
+}
+
+.ggs-clue-image {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: #0e0a21;
+  color: #d6caf7;
+  text-decoration: none;
+}
+
+.ggs-clue-compare .ggs-clue-image {
+  aspect-ratio: 4 / 3;
+}
+
+.ggs-clue-image img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  transition: transform 0.18s ease, filter 0.18s ease;
+}
+
+.ggs-clue-image > span {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  padding: 4px 6px;
+  border-radius: 5px;
+  background: rgba(8, 5, 21, 0.78);
+  color: #f2ecff;
+  font-size: 8px;
+  font-weight: 750;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+
+.ggs-clue-image:hover img {
+  transform: scale(1.018);
+  filter: brightness(1.05);
+}
+
+.ggs-clue-image:hover > span,
+.ggs-clue-image-missing > span {
+  opacity: 1;
+}
+
+.ggs-clue-image-missing {
+  min-height: 92px;
+  display: grid;
+  place-items: center;
+  background: #100b27;
+}
+
+.ggs-clue-image-missing > span {
+  position: static;
+  color: #ffd84d;
+  background: transparent;
+  font-size: 10px;
+}
+
+.ggs-clue-copy {
+  padding: 10px;
+}
+
+.ggs-country-label {
+  min-height: 18px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 7px;
+  color: #fffaf0;
+  font-size: 10px;
+}
+
+.ggs-country-label > span {
+  margin-right: auto;
+  color: #9cff3f;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.ggs-country-label img {
+  margin-right: 0 !important;
+}
+
+.ggs-clue-copy p {
+  margin: 0 0 8px;
+  color: #eee7ff;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.ggs-clue-copy > a {
+  color: #b9addd;
+  font-size: 9px;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.ggs-clue-copy > a:hover {
+  color: #ffd84d;
+  text-decoration: underline;
+}
+
+.ggs-takeaway {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 9px;
+  margin-top: 11px;
+  padding: 10px;
+  border-left: 3px solid #9cff3f;
+  border-radius: 0 7px 7px 0;
+  background: rgba(156, 255, 63, 0.075);
+  color: #e9e1ff;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.ggs-takeaway strong {
+  color: #baff7a;
+}
+
+.ggs-visual-loading {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ggs-visual-loading span {
+  height: 112px;
+  border-radius: 8px;
+  background: linear-gradient(100deg, #211744 20%, #33245f 40%, #211744 60%);
+  background-size: 200% 100%;
+  animation: ggs-shimmer 1.2s linear infinite;
+}
+
+@keyframes ggs-shimmer {
+  to { background-position-x: -200%; }
+}
+
+.ggs-visual-empty {
+  padding: 20px;
+  border: 1px dashed #4b3488;
+  border-radius: 8px;
+  color: #b9addd;
+  font-size: 11px;
+  text-align: center;
+}
+
+.ggs-tips-container summary {
+  color: #fffaf0;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.ggs-tips-container[open] summary {
+  margin-bottom: 10px;
 }
 
 .ggs-tips-container ul {
@@ -179,9 +431,24 @@
   border-radius: 8px;
 }
 
-.ggs-tip-target {
-  color: #9cff3f !important;
-  font-weight: 800;
+@container (max-width: 470px) {
+  .ggs-comparison-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ggs-comparison-grid .ggs-clue-side + .ggs-clue-side {
+    border-left: 0;
+    border-top: 1px solid #3f2e74;
+  }
+
+  .ggs-clue-compare .ggs-clue-image {
+    aspect-ratio: 16 / 9;
+  }
+
+  .ggs-takeaway {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
 }
 
 .ggs-profile-import-btn {
@@ -215,6 +482,8 @@
     right: 8px;
     top: 64px;
     width: auto;
+    min-width: 0;
+    max-height: calc(100vh - 72px);
   }
 
   .ggs-round-details div {

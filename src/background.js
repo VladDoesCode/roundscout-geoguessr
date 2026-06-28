@@ -1,3 +1,9 @@
+importScripts("guide-parser.js");
+
+const guideCache = new Map();
+const GUIDE_CACHE_KEY = "ggStudyVisualGuides";
+const GUIDE_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
+
 function cc(value) {
   return String(value || "").trim().toUpperCase();
 }
@@ -96,6 +102,39 @@ function saveRound(row, sendResponse) {
   });
 }
 
+async function fetchPlonkitGuide(slug) {
+  const clean = String(slug || "").toLowerCase().replace(/[^a-z0-9-]/g, "");
+  if (!clean) throw new Error("Invalid country guide");
+  if (guideCache.has(clean)) return guideCache.get(clean);
+  try {
+    const stored = await chrome.storage.local.get(GUIDE_CACHE_KEY);
+    const entry = stored?.[GUIDE_CACHE_KEY]?.[clean];
+    if (entry?.guide && Date.now() - Number(entry.fetchedAt) < GUIDE_CACHE_TTL) {
+      guideCache.set(clean, entry.guide);
+      return entry.guide;
+    }
+  } catch (e) {}
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 9000);
+  let html;
+  try {
+    const response = await fetch(`https://www.plonkit.net/${clean}`, { credentials: "omit", signal: controller.signal });
+    html = await response.text();
+  } finally {
+    clearTimeout(timeout);
+  }
+  const guide = globalThis.RoundScoutGuideParser?.guideFromHtml(html, clean);
+  if (!guide) throw new Error("Country guide unavailable");
+  guideCache.set(clean, guide);
+  try {
+    const stored = await chrome.storage.local.get(GUIDE_CACHE_KEY);
+    const cache = stored?.[GUIDE_CACHE_KEY] && typeof stored[GUIDE_CACHE_KEY] === "object" ? stored[GUIDE_CACHE_KEY] : {};
+    cache[clean] = { fetchedAt: Date.now(), guide };
+    await chrome.storage.local.set({ [GUIDE_CACHE_KEY]: cache });
+  } catch (e) {}
+  return guide;
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "OPEN_STATS_PAGE") {
     chrome.tabs.create({ url: chrome.runtime.getURL("src/stats.html") });
@@ -124,6 +163,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then(data => sendResponse({ ok: true, data }))
       .catch(err => sendResponse({ ok: false, error: err.message }));
     return true; // Keeps channel open for async response
+  } else if (message.type === "FETCH_PLONKIT_GUIDE") {
+    fetchPlonkitGuide(message.slug)
+      .then(data => sendResponse({ ok: true, data }))
+      .catch(err => sendResponse({ ok: false, error: err.message }));
+    return true;
   }
 });
 
