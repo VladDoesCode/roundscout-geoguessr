@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "RoundScout for GeoGuessr",
-  "version": "1.11.0",
+  "version": "1.11.1",
   "description": "Post-round GeoGuessr visual coach, round tracker, and personalized learning dashboard.",
   "permissions": [
     "storage",
@@ -42,6 +42,7 @@
       "js": [
         "src/data.js",
         "src/clues.js",
+        "src/capture-utils.js",
         "src/content.js"
       ],
       "css": [

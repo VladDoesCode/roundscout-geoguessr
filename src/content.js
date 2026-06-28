@@ -10,13 +10,18 @@
   const guideMemo = new Map();
   const memoryStore = { ggStudyRounds: [] };
   const duelState = { id: "", teams: null, rounds: null, guesses: new Map(), lastFetch: 0 };
+  const classicState = { token: "", submissions: new Map(), latestSubmission: null, details: new Map(), fetching: new Map(), lastFetch: new Map() };
+  const pageRequests = new Map();
+  const capture = window.RoundScoutCapture;
   const savedFingerprints = new Map();
   let lastShownFingerprint = "";
   let dismissedFingerprint = "";
   let dismissedRoundKey = "";
   let replayAt = 0;
   let meLoading = false;
-  let duelStateLoading = false;
+  let duelStateLoading = "";
+  let duelDiscoveryAt = 0;
+  let duelDiscoveryLoading = false;
   let visualRenderToken = 0;
 
   const countryDisplay = (() => {
@@ -444,6 +449,14 @@
     return false;
   }
 
+  function visibleRoundNumber() {
+    let text = document.body?.innerText || "";
+    const panel = document.getElementById("ggs-overlay-panel");
+    if (panel) text = text.replace(panel.innerText, "");
+    const rounds = Array.from(text.matchAll(/\bround\s*(\d+)\b/gi), match => Number(match[1])).filter(Number.isFinite);
+    return rounds.length ? Math.max(...rounds) : 0;
+  }
+
   function cc(value) {
     return String(value || "").trim().toUpperCase();
   }
@@ -711,6 +724,22 @@
     };
   }
 
+  function pageFetchJson(url, timeoutMs = 6000) {
+    if (!isContextValid()) return Promise.resolve(null);
+    const requestId = `ggs_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    return new Promise(resolve => {
+      const timer = setTimeout(() => {
+        pageRequests.delete(requestId);
+        resolve(null);
+      }, timeoutMs);
+      pageRequests.set(requestId, value => {
+        clearTimeout(timer);
+        resolve(value);
+      });
+      window.postMessage({ source: "GG_STUDY_FETCH_REQUEST", requestId, url }, window.location.origin);
+    });
+  }
+
   function rowFingerprint(row) {
     return [
       row.id,
@@ -852,12 +881,13 @@
     if (me.id || meLoading) return;
     meLoading = true;
     try {
-      const res = await fetch("/api/v3/profiles");
+      const res = await fetch("/api/v3/profiles", { credentials: "include", headers: { Accept: "application/json" } });
       if (res.ok) {
         const data = await res.json();
         if (data) {
           const profile = data.user || data;
           remember(profile);
+          learn(data);
         }
       }
     } catch (e) {
@@ -867,25 +897,92 @@
     }
   }
 
-  async function fetchDuelState(id) {
-    if (!id || duelStateLoading) return;
-    duelState.lastFetch = Date.now();
-    duelStateLoading = true;
+  async function fetchClassicDetails(token, wantedRound = 0) {
+    if (!token) return [];
+    const now = Date.now();
+    const cached = classicState.details.get(token) || [];
+    const cachedFrame = capture?.selectClassic(cached[0] || {}, cached) || {};
+    if (cachedFrame.roundNumber >= wantedRound && (guessCoords(cachedFrame.guess) || code(cachedFrame.guess) || noGuess(cachedFrame.guess))) {
+      return cached;
+    }
+    if (classicState.fetching.has(token)) return classicState.fetching.get(token);
+    if (now - (classicState.lastFetch.get(token) || 0) < 700) return cached;
+
+    const task = (async () => {
+      classicState.lastFetch.set(token, Date.now());
+      const details = [];
+      const urls = [
+        `${location.origin}/api/v3/games/${encodeURIComponent(token)}?client=web`,
+        `${location.origin}/api/v3/results/${encodeURIComponent(token)}`
+      ];
+      for (const url of urls) {
+        const data = await pageFetchJson(url);
+        if (!data) continue;
+        details.push(data);
+        const frame = capture?.selectClassic(data, details) || {};
+        if (guessCoords(frame.guess) || code(frame.guess) || noGuess(frame.guess)) break;
+      }
+      if (details.length) classicState.details.set(token, details);
+      return details.length ? details : (classicState.details.get(token) || []);
+    })();
+    classicState.fetching.set(token, task);
     try {
-      const res = await fetch(`https://game-server.geoguessr.com/api/duels/${id}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data) {
-          if (data.id) duelState.id = String(data.id);
-          if (Array.isArray(data.teams)) duelState.teams = mergeArray(duelState.teams, data.teams);
-          if (Array.isArray(data.rounds)) duelState.rounds = mergeArray(duelState.rounds, data.rounds);
-        }
+      return await task;
+    } finally {
+      classicState.fetching.delete(token);
+    }
+  }
+
+  async function fetchDuelState(id) {
+    if (!id || duelStateLoading === id) return;
+    duelState.lastFetch = Date.now();
+    duelStateLoading = id;
+    try {
+      if (duelState.id && duelState.id !== id) return;
+      duelState.id = id;
+      const encoded = encodeURIComponent(id);
+      const urls = [
+        `https://game-server.geoguessr.com/api/duels/${encoded}`,
+        `https://game-server.geoguessr.com/api/duels/${encoded}/summary`,
+        `${location.origin}/api/v4/duels/${encoded}`
+      ];
+      for (const url of urls) {
+        const data = await pageFetchJson(url);
+        if (!data) continue;
+        if (duelState.id !== id) return;
+        rememberDuelParts(data);
+        if (duelState.teams?.length && duelState.rounds?.length) break;
       }
     } catch (e) {
       console.error("[GeoGuessr Tracker] Failed to fetch duel state:", e);
     } finally {
-      duelStateLoading = false;
+      if (duelStateLoading === id) duelStateLoading = "";
     }
+  }
+
+  async function discoverOngoingDuel() {
+    if (!duelPath() || duelDiscoveryLoading || Date.now() - duelDiscoveryAt < 1800) return "";
+    duelDiscoveryAt = Date.now();
+    duelDiscoveryLoading = true;
+    try {
+      const urls = [
+        "https://game-server.geoguessr.com/api/duels/ongoing",
+        `${location.origin}/api/v4/duels/ongoing`
+      ];
+      for (const url of urls) {
+        const data = await pageFetchJson(url, 4000);
+        if (!data) continue;
+        rememberDuelParts(data);
+        const id = gameId(data) || duelState.id;
+        if (id) {
+          await fetchDuelState(id);
+          return id;
+        }
+      }
+    } finally {
+      duelDiscoveryLoading = false;
+    }
+    return "";
   }
 
   function loadMeFromDOM() {
@@ -1008,6 +1105,80 @@
       return parts[mIdx + 2];
     }
     return "";
+  }
+
+  function classicToken(value, depth = 0) {
+    if (!value || typeof value !== "object" || depth > 5) return "";
+    for (const key of ["token", "gameToken"]) {
+      if (value[key] && typeof value[key] !== "object") return String(value[key]);
+    }
+    for (const key of ["payload", "data", "result", "game", "state", "currentGame"]) {
+      const found = classicToken(value[key], depth + 1);
+      if (found) return found;
+    }
+    return "";
+  }
+
+  function tokenFromUrl(url = location.href) {
+    const api = String(url).match(/\/api\/v3\/(?:games|results)\/([^/?#]+)/i);
+    if (api?.[1]) return decodeURIComponent(api[1]);
+    const path = String(url).match(/\/(?:game|challenge)\/([^/?#]+)/i);
+    return path?.[1] ? decodeURIComponent(path[1]) : "";
+  }
+
+  function duelIdFromUrl(url) {
+    const match = String(url || "").match(/\/api\/duels\/([^/?#]+)/i);
+    const id = match?.[1] ? decodeURIComponent(match[1]) : "";
+    return id && !/^(?:ongoing|matchmaking|queue|history|summary)$/i.test(id) ? id : "";
+  }
+
+  function noGuess(value) {
+    return Boolean(value && (
+      value.noGuess || value.noGuessMade || value.didNotGuess || value.timedOut || value.timedout
+    ));
+  }
+
+  function submissionKey(token, roundNumber) {
+    return `${token || "current"}:${roundNumber || "latest"}`;
+  }
+
+  function rememberSubmittedGuess(url, payload) {
+    if (!payload || typeof payload !== "object") return;
+    const candidate = payload.guess || payload.pin || payload.position || payload;
+    if (!guessCoords(candidate) && !noGuess(candidate)) return;
+    const roundNumber = roundNo(payload, roundNo(candidate, 0));
+
+    if (duelPath()) {
+      const id = duelIdFromUrl(url) || gameId(payload);
+      if (id && duelState.id && id !== duelState.id) resetDuelState(id);
+      else if (id) duelState.id = id;
+      rememberGuess(roundNumber || duelState.rounds?.length || 1, candidate);
+      return;
+    }
+
+    const token = classicToken(payload) || tokenFromUrl(url) || classicState.token || tokenFromUrl();
+    if (!token) return;
+    classicState.token = token;
+    classicState.latestSubmission = { value: candidate, at: Date.now(), pageToken: tokenFromUrl() };
+    const exact = submissionKey(token, roundNumber);
+    classicState.submissions.set(exact, mergeObject(classicState.submissions.get(exact), candidate));
+    classicState.submissions.set(submissionKey(token, 0), mergeObject(classicState.submissions.get(submissionKey(token, 0)), candidate));
+  }
+
+  function submittedClassicGuess(token, roundNumber) {
+    return classicState.submissions.get(submissionKey(token, roundNumber)) ||
+      classicState.submissions.get(submissionKey(token, 0)) ||
+      (Date.now() - (classicState.latestSubmission?.at || 0) < 120000 && classicState.latestSubmission?.pageToken === tokenFromUrl()
+        ? classicState.latestSubmission.value
+        : null);
+  }
+
+  function resetDuelState(id = "") {
+    duelState.id = id;
+    duelState.teams = null;
+    duelState.rounds = null;
+    duelState.guesses = new Map();
+    duelState.lastFetch = 0;
   }
 
   function getActiveGameId() {
@@ -1299,11 +1470,24 @@
   }
 
   async function processClassic(payload) {
-    if (duelPath() || !payload?.token) return null;
-    const roundNumber = n(payload.round, payload.currentRoundNumber, payload.player?.guesses?.length, 1);
-    const index = Math.max(0, roundNumber - 1);
-    const round = payload.rounds?.[index];
-    const guess = payload.player?.guesses?.[index];
+    if (duelPath() || !capture) return null;
+    const initial = capture.selectClassic(payload);
+    const token = initial.token || classicToken(payload) || classicState.token || tokenFromUrl();
+    if (!token || !resultVisible()) return null;
+    classicState.token = token;
+
+    const wantedRound = Math.max(initial.roundNumber, visibleRoundNumber());
+    const earlySubmission = submittedClassicGuess(token, wantedRound);
+    const earlyFrame = capture.selectClassic(payload, [], earlySubmission);
+    const needsDetails = !earlyFrame.round || !earlyFrame.guess ||
+      (!guessCoords(earlyFrame.guess) && !code(earlyFrame.guess) && !noGuess(earlyFrame.guess));
+    const details = needsDetails
+      ? await fetchClassicDetails(token, wantedRound)
+      : (classicState.details.get(token) || []);
+    const provisional = capture.selectClassic(payload, details);
+    const submitted = submittedClassicGuess(token, provisional.roundNumber);
+    const frame = capture.selectClassic(payload, details, submitted);
+    const { roundNumber, round, guess } = frame;
     const actualPoint = correctCoords(round);
     const guessedPoint = guessCoords(guess);
     const actualMeta = await geoMeta(actualPoint);
@@ -1311,10 +1495,11 @@
     let actual = code(round) || actualMeta.countryCode;
     let guessed = code(guess) || guessedMeta.countryCode;
     if (!actual || !guess) return null;
+    if (!guessed && !noGuess(guess)) return null;
     const saved = await save({
-      gameId: payload.token,
+      gameId: token,
       roundNumber,
-      mode: payload.mode || "classic",
+      mode: frame.mode || payload.mode || "classic",
       actualCode: actual,
       guessedCode: guessed,
       actualRegion: actualMeta.region,
@@ -1323,7 +1508,7 @@
       score: score(guess),
       damage: 0
     });
-    if (resultVisible()) {
+    if (saved && resultVisible()) {
       show(saved);
     }
     return saved;
@@ -1331,14 +1516,16 @@
 
   function rememberDuelParts(root) {
     if (!root || typeof root !== "object") return;
+    const loose = capture?.collectDuelFragments(root) || { id: "", teams: [], rounds: [] };
     const snapshots = duelSnapshots(root);
-    const id = snapshots.map(gameId).find(Boolean) || gameId(root);
+    const id = loose.id || snapshots.map(gameId).find(Boolean) || gameId(root);
     if (id && duelState.id && id !== duelState.id) {
-      duelState.teams = null;
-      duelState.rounds = null;
-      duelState.guesses = new Map();
+      resetDuelState(id);
     }
     if (id) duelState.id = id;
+    const fragments = capture?.collectDuelFragments(root, duelState.id) || loose;
+    for (const teams of fragments.teams) duelState.teams = mergeArray(duelState.teams, teams);
+    for (const rounds of fragments.rounds) duelState.rounds = mergeArray(duelState.rounds, rounds);
     for (const snapshot of snapshots) {
       duelState.teams = mergeArray(duelState.teams, snapshot.teams);
       duelState.rounds = mergeArray(duelState.rounds, snapshot.rounds);
@@ -1354,15 +1541,17 @@
     learn(payload);
     if (!replay) cache.unshift(payload);
     cache.length = Math.min(cache.length, 24);
-    await processClassic(payload);
-    
     if (duelPath()) {
       rememberDuelParts(payload);
-      const id = getActiveGameId();
-      if (id && resultVisible() && (!duelState.teams || !duelState.rounds || Date.now() - duelState.lastFetch > 2500)) {
+      let id = getActiveGameId();
+      if (resultVisible()) id = (await discoverOngoingDuel()) || id;
+      const stale = Date.now() - duelState.lastFetch > 1800;
+      if (id && ((!duelState.teams || !duelState.rounds) || (resultVisible() && stale))) {
         await fetchDuelState(id);
       }
       await processDuel(duelState);
+    } else {
+      await processClassic(payload);
     }
   }
 
@@ -1427,9 +1616,28 @@
   }
 
   window.addEventListener("message", event => {
-    if (isContextValid() && event.source === window && event.data?.source === "GG_STUDY_PROBE") {
-      processPayload(event.data.payload);
+    if (!isContextValid() || event.source !== window) return;
+    if (event.data?.source === "GG_STUDY_FETCH_RESULT") {
+      const resolve = pageRequests.get(String(event.data.requestId || ""));
+      if (!resolve) return;
+      pageRequests.delete(String(event.data.requestId));
+      resolve(event.data.ok ? event.data.payload : null);
+      return;
     }
+    if (event.data?.source !== "GG_STUDY_PROBE") return;
+
+    const id = duelIdFromUrl(event.data.url);
+    if (id && duelPath()) {
+      if (duelState.id && duelState.id !== id) resetDuelState(id);
+      else duelState.id = id;
+    }
+    const token = !duelPath() ? tokenFromUrl(event.data.url) : "";
+    if (token) classicState.token = token;
+    if (event.data.direction === "request") {
+      rememberSubmittedGuess(event.data.url, event.data.payload);
+      return;
+    }
+    processPayload(event.data.payload);
   });
 
   fetchMe();
@@ -1457,6 +1665,7 @@
 
     if (duelPath()) {
       const id = getActiveGameId();
+      discoverOngoingDuel();
       if (id && (!duelState.teams || !duelState.rounds || Date.now() - duelState.lastFetch > 2500)) {
         fetchDuelState(id);
       }

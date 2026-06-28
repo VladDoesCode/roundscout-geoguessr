@@ -7,9 +7,9 @@
   const INTERESTING_URL = /geoguessr\.com|game-server\.geoguessr\.com/i;
   const INTERESTING_BODY = /round|duel|guess|score|health|damage|lat|lng|country|gameId|playerId|userId|teams|panorama/i;
 
-  function emit(url, payload) {
+  function emit(url, payload, direction = "response", method = "") {
     if (!interesting(payload)) return;
-    window.postMessage({ source: "GG_STUDY_PROBE", url: String(url || ""), payload }, window.location.origin);
+    window.postMessage({ source: "GG_STUDY_PROBE", url: String(url || ""), direction, method, payload }, window.location.origin);
   }
 
   function interesting(payload) {
@@ -54,8 +54,23 @@
     else if (Array.isArray(value.arguments)) value.arguments.forEach(item => flatten(item, out));
   }
 
-  function inspect(url, raw) {
-    for (const payload of parsePayloads(raw).slice(0, 16)) emit(url, payload);
+  function inspect(url, raw, direction = "response", method = "") {
+    for (const payload of parsePayloads(raw).slice(0, 16)) emit(url, payload, direction, method);
+  }
+
+  function inspectBody(url, body, method) {
+    if (body == null) return;
+    if (typeof body === "string") {
+      inspect(url, body, "request", method);
+    } else if (body instanceof URLSearchParams) {
+      inspect(url, body.toString(), "request", method);
+    } else if (body instanceof FormData) {
+      const value = {};
+      body.forEach((item, key) => { value[key] = typeof item === "string" ? item : item.name; });
+      emit(url, value, "request", method);
+    } else if (body instanceof Blob) {
+      body.text().then(text => inspect(url, text, "request", method)).catch(() => {});
+    }
   }
 
   function fullUrl(input) {
@@ -69,13 +84,40 @@
 
   const nativeFetch = window.fetch;
   window.fetch = async function patchedFetch(...args) {
-    const response = await nativeFetch.apply(this, args);
     const url = fullUrl(args[0]);
+    const method = String(args[1]?.method || args[0]?.method || "GET").toUpperCase();
     if (INTERESTING_URL.test(url)) {
-      try { inspect(url, await response.clone().text()); } catch (e) {}
+      const body = args[1]?.body;
+      if (body != null) inspectBody(url, body, method);
+      else if (typeof Request !== "undefined" && args[0] instanceof Request) {
+        try { args[0].clone().text().then(text => inspect(url, text, "request", method)).catch(() => {}); } catch (e) {}
+      }
+    }
+    const response = await nativeFetch.apply(this, args);
+    if (INTERESTING_URL.test(url)) {
+      try { inspect(url, await response.clone().text(), "response", method); } catch (e) {}
     }
     return response;
   };
+
+  window.addEventListener("message", async event => {
+    if (event.source !== window || event.data?.source !== "GG_STUDY_FETCH_REQUEST") return;
+    const requestId = String(event.data.requestId || "");
+    const url = fullUrl(event.data.url);
+    if (!requestId || !/^https:\/\/(?:www\.)?geoguessr\.com\/|^https:\/\/game-server\.geoguessr\.com\//i.test(url)) return;
+    try {
+      const response = await nativeFetch.call(window, url, {
+        credentials: "include",
+        headers: { Accept: "application/json", "X-Client": "web" }
+      });
+      const text = await response.text();
+      let payload = null;
+      try { payload = JSON.parse(text); } catch (e) {}
+      window.postMessage({ source: "GG_STUDY_FETCH_RESULT", requestId, ok: response.ok, status: response.status, payload }, window.location.origin);
+    } catch (error) {
+      window.postMessage({ source: "GG_STUDY_FETCH_RESULT", requestId, ok: false, error: String(error?.message || error) }, window.location.origin);
+    }
+  });
 
   const NativeXHR = window.XMLHttpRequest;
   if (NativeXHR?.prototype && !window.__ggStudyXhrProbePatched) {
@@ -85,13 +127,17 @@
 
     NativeXHR.prototype.open = function patchedOpen(method, url) {
       this.__ggStudyUrl = fullUrl(url);
+      this.__ggStudyMethod = String(method || "GET").toUpperCase();
       return nativeOpen.apply(this, arguments);
     };
 
-    NativeXHR.prototype.send = function patchedSend() {
+    NativeXHR.prototype.send = function patchedSend(body) {
       try {
+        if (INTERESTING_URL.test(this.__ggStudyUrl || "")) inspectBody(this.__ggStudyUrl, body, this.__ggStudyMethod);
         this.addEventListener("load", function onLoad() {
-          if (INTERESTING_URL.test(this.__ggStudyUrl || "")) inspect(this.__ggStudyUrl, this.responseText);
+          try {
+            if (INTERESTING_URL.test(this.__ggStudyUrl || "")) inspect(this.__ggStudyUrl, this.responseText, "response", this.__ggStudyMethod);
+          } catch (e) {}
         });
       } catch (e) {}
       return nativeSend.apply(this, arguments);

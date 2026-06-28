@@ -1,10 +1,10 @@
 {
   "name": "roundscout-geoguessr",
-  "version": "1.11.0",
+  "version": "1.11.1",
   "private": true,
   "scripts": {
     "test": "node --test tests/*.test.js",
-    "check": "node --check src/background.js && node --check src/page-probe.js && node --check src/data.js && node --check src/clues.js && node --check src/content.js && node --check src/stats.js",
+    "check": "node --check src/background.js && node --check src/page-probe.js && node --check src/data.js && node --check src/clues.js && node --check src/capture-utils.js && node --check src/content.js && node --check src/stats.js",
     "preview": "node tests/serve-fixture.js"
   }
 }
