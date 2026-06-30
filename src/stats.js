@@ -12,26 +12,36 @@
   let sortColumn = "ev";
   let sortAscending = false;
   let lastDataSignature = null;
+  let diagnosticEvents = [];
+  let diagnosticSignature = "";
 
   document.addEventListener("DOMContentLoaded", init);
 
   function init() {
     setupEventListeners();
     refreshData();
+    refreshDiagnostics();
 
     if (chrome.storage?.onChanged) {
       chrome.storage.onChanged.addListener((changes, areaName) => {
-        if (areaName !== "local" || !changes.ggStudyRounds) return;
-        const nextRounds = dedupeRounds(changes.ggStudyRounds.newValue || []);
-        const signature = dataSignature(nextRounds);
-        if (signature === lastDataSignature) return;
-        masterRounds = nextRounds;
-        lastDataSignature = signature;
-        renderDashboard();
+        if (areaName !== "local") return;
+        if (changes.ggStudyRounds) {
+          const nextRounds = dedupeRounds(changes.ggStudyRounds.newValue || []);
+          const signature = dataSignature(nextRounds);
+          if (signature !== lastDataSignature) {
+            masterRounds = nextRounds;
+            lastDataSignature = signature;
+            renderDashboard();
+          }
+        }
+        if (changes.roundScoutDiagnostics) setDiagnostics(changes.roundScoutDiagnostics.newValue || []);
       });
     }
 
-    setInterval(refreshData, 3000);
+    setInterval(() => {
+      refreshData();
+      refreshDiagnostics();
+    }, 3000);
   }
 
   function setupEventListeners() {
@@ -62,6 +72,93 @@
     document.getElementById("import-btn")?.addEventListener("click", () => document.getElementById("file-input")?.click());
     document.getElementById("file-input")?.addEventListener("change", importData);
     document.getElementById("clear-btn")?.addEventListener("click", wipeData);
+    document.getElementById("diagnostic-download")?.addEventListener("click", downloadDiagnostics);
+    document.getElementById("diagnostic-clear")?.addEventListener("click", clearDiagnostics);
+    document.getElementById("diagnostic-toggle")?.addEventListener("click", event => {
+      const panel = document.getElementById("diagnostic-panel");
+      if (!panel) return;
+      panel.hidden = !panel.hidden;
+      event.currentTarget.setAttribute("aria-expanded", String(!panel.hidden));
+    });
+    const diagnosticVersion = document.getElementById("diagnostic-version");
+    if (diagnosticVersion) diagnosticVersion.textContent = `v${chrome.runtime.getManifest().version}`;
+  }
+
+  async function refreshDiagnostics() {
+    const res = await chrome.storage.local.get("roundScoutDiagnostics");
+    setDiagnostics(res.roundScoutDiagnostics || []);
+  }
+
+  function setDiagnostics(events) {
+    const next = Array.isArray(events) ? events.slice(-220) : [];
+    const signature = next.map(event => `${event.t}|${event.session}|${event.source}|${event.event}`).join(";");
+    if (signature === diagnosticSignature) return;
+    diagnosticEvents = next;
+    diagnosticSignature = signature;
+    renderDiagnostics();
+  }
+
+  function renderDiagnostics() {
+    const count = document.getElementById("diagnostic-count");
+    const latest = document.getElementById("diagnostic-latest");
+    const log = document.getElementById("diagnostic-log");
+    if (count) count.textContent = String(diagnosticEvents.length);
+    if (latest) {
+      const event = diagnosticEvents.at(-1);
+      latest.textContent = event ? `Latest: ${event.event} at ${new Date(event.t).toLocaleTimeString()}` : "Waiting for GeoGuessr...";
+    }
+    if (log) {
+      const lines = diagnosticEvents.slice(-45).map(event => {
+        const time = new Date(event.t).toLocaleTimeString();
+        const details = JSON.stringify(event.data || {});
+        return `${time}  ${event.source || "content"}  ${event.event}  ${details}`;
+      });
+      log.textContent = lines.length ? lines.join("\n") : "No diagnostic events yet.";
+    }
+  }
+
+  function diagnosticReport() {
+    const manifest = chrome.runtime.getManifest();
+    const rounds = masterRounds
+      .slice()
+      .sort((a, b) => num(b.timestamp) - num(a.timestamp))
+      .slice(0, 15)
+      .map(round => ({
+        game: shortId(round.gameId),
+        round: round.roundNumber,
+        mode: round.mode,
+        actual: cc(round.actualCode),
+        guessed: cc(round.guessedCode),
+        score: Math.round(num(round.score)),
+        distance: Math.round(num(round.distance)),
+        damage: Math.round(num(round.damage)),
+        timestamp: round.timestamp
+      }));
+    return {
+      reportVersion: 1,
+      generatedAt: new Date().toISOString(),
+      extension: { name: manifest.name, version: manifest.version, description: manifest.description },
+      browser: { userAgent: navigator.userAgent, language: navigator.language, platform: navigator.platform },
+      savedRoundCount: masterRounds.length,
+      recentSavedRoundSummaries: rounds,
+      diagnosticEventCount: diagnosticEvents.length,
+      diagnostics: diagnosticEvents
+    };
+  }
+
+  function downloadDiagnostics() {
+    const blob = new Blob([JSON.stringify(diagnosticReport(), null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `roundscout-diagnostics-${Date.now()}.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function clearDiagnostics() {
+    await chrome.storage.local.set({ roundScoutDiagnostics: [] });
+    setDiagnostics([]);
   }
 
   async function refreshData() {

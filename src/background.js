@@ -157,12 +157,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     };
     saveRound(row, sendResponse);
     return true;
-  } else if (message.type === "FETCH_MATCH_DETAILS") {
-    fetch(message.url)
-      .then(res => res.json())
-      .then(data => sendResponse({ ok: true, data }))
-      .catch(err => sendResponse({ ok: false, error: err.message }));
-    return true; // Keeps channel open for async response
   } else if (message.type === "FETCH_PLONKIT_GUIDE") {
     fetchPlonkitGuide(message.slug)
       .then(data => sendResponse({ ok: true, data }))

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "RoundScout for GeoGuessr",
-  "version": "1.11.3",
+  "version": "1.12.0",
   "description": "Post-round GeoGuessr visual coach, round tracker, and personalized learning dashboard.",
   "permissions": [
     "storage",
@@ -11,7 +11,6 @@
     "https://www.geoguessr.com/*",
     "https://geoguessr.com/*",
     "https://game-server.geoguessr.com/*",
-    "https://api.bigdatacloud.net/*",
     "https://www.plonkit.net/*",
     "https://upload.wikimedia.org/*"
   ],
@@ -43,6 +42,7 @@
         "src/data.js",
         "src/clues.js",
         "src/capture-utils.js",
+        "src/country-resolver.js",
         "src/content.js"
       ],
       "css": [
@@ -56,7 +56,9 @@
     {
       "resources": [
         "src/page-probe.js",
-        "src/stats.html"
+        "src/stats.html",
+        "src/vendor/natural-earth-countries.geojson",
+        "src/vendor/natural-earth-regions.geojson"
       ],
       "matches": [
         "https://www.geoguessr.com/*",

@@ -46,6 +46,7 @@ You can drag and resize it, close it, or open the full stats page.
 - Post-round study popup for Classic and Duels.
 - Country detection after the answer is revealed.
 - Saved round history with target country, guessed country, score, distance, regions, and Duel base damage.
+- Offline country and first-level region detection using bundled public-domain Natural Earth boundaries.
 - Pair-specific visual debriefs that compare the target with your guess.
 - Structured beginner clues for language, driving side, plates, road markings, signs, bollards, utility poles, Google car, architecture, and landscape.
 - Matched guide images: every image stays attached to the clue it actually explains.
@@ -55,6 +56,7 @@ You can drag and resize it, close it, or open the full stats page.
 - "Things I need to learn / study" section that turns your mistakes into a study list.
 - Local JSON export/import for backups.
 - Everything is saved locally in your browser. No backend.
+- A discreet built-in diagnostics exporter for troubleshooting future GeoGuessr updates.
 
 ## What It Does Not Do
 
@@ -105,7 +107,7 @@ No pressure at all. I made this because I wanted a better way to learn, and I ho
 
 RoundScout stores saved rounds with `chrome.storage.local`. That means the data stays in your browser unless you export it.
 
-To identify countries and regions, RoundScout sends revealed round coordinates to BigDataCloud's public reverse-geocoding endpoint. Visual debriefs request the public Plonkit pages for the target country and, when useful, the country you guessed. These requests do not include your GeoGuessr account, saved history, score, or personal stats.
+Country and region identification runs locally from bundled Natural Earth boundary data. Visual debriefs request the public Plonkit pages for the target country and, when useful, the country you guessed. Those requests do not include your GeoGuessr account, saved history, score, or personal stats.
 
 If you uninstall the extension, browser extension storage may be removed too. Use **Export JSON** if you want a backup.
 
@@ -129,6 +131,8 @@ After editing files:
 - `src/background.js` - extension messages and storage merge.
 - `src/data.js` - country tips.
 - `src/clues.js` - structured clue categories and pair-specific lesson ranking.
+- `src/country-resolver.js` - local country and region lookup.
 - `src/guide-parser.js` - extracts matched visual clue previews from public guide pages.
 - `src/stats.html`, `src/stats.css`, `src/stats.js` - stats dashboard.
 - `src/styles.css` - popup styling.
+- `DIAGNOSTICS.md` - hidden diagnostics export workflow for future debugging.

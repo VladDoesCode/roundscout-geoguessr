@@ -606,6 +606,113 @@ code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+.header-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.diagnostic-toggle {
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  background: rgba(12, 8, 35, 0.28);
+  color: rgba(255, 255, 255, 0.34);
+  font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  cursor: pointer;
+}
+
+.diagnostic-toggle:hover,
+.diagnostic-toggle[aria-expanded="true"] {
+  border-color: rgba(255, 211, 61, 0.42);
+  color: var(--accent-warm);
+  background: rgba(255, 211, 61, 0.08);
+}
+
+.diagnostic-card[hidden] {
+  display: none;
+}
+
+.diagnostic-card {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) auto;
+  gap: 14px 24px;
+  align-items: center;
+  margin-bottom: 20px;
+  padding: 18px;
+  border: 1px solid rgba(255, 211, 61, 0.48);
+  border-radius: 10px;
+  background: linear-gradient(120deg, rgba(255, 211, 61, 0.08), rgba(124, 60, 255, 0.12));
+}
+
+.diagnostic-copy h3 {
+  margin: 2px 0 5px;
+}
+
+.diagnostic-copy > p:last-child {
+  max-width: 850px;
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.diagnostic-status,
+.diagnostic-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.diagnostic-status span {
+  padding: 7px 10px;
+  border: 1px solid rgba(167, 255, 63, 0.24);
+  border-radius: 7px;
+  background: rgba(12, 8, 35, 0.58);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.diagnostic-status strong {
+  color: var(--accent);
+}
+
+.diagnostic-primary {
+  border-color: rgba(255, 211, 61, 0.58);
+  background: rgba(255, 211, 61, 0.14);
+  color: var(--accent-warm);
+}
+
+.diagnostic-preview {
+  grid-column: 1 / -1;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+  padding-top: 10px;
+}
+
+.diagnostic-preview summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+#diagnostic-log {
+  max-height: 260px;
+  overflow: auto;
+  margin: 10px 0 0;
+  padding: 12px;
+  border-radius: 7px;
+  background: rgba(7, 5, 24, 0.82);
+  color: #ddd6ff;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .filter-classic .metric-duel-only {
   display: none;
 }
@@ -647,5 +754,14 @@ code {
 
   .main-viewport {
     padding: 18px;
+  }
+
+  .diagnostic-card {
+    grid-template-columns: 1fr;
+  }
+
+  .diagnostic-status,
+  .diagnostic-actions {
+    justify-content: flex-start;
   }
 }

@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 const capture = require("../src/capture-utils.js");
 
-test("a React Duel snapshot reaches SAVE_ROUND with the player's result", async () => {
+test("a multi-round React Duel keeps each guess scoped and reaches SAVE_ROUND", async () => {
   const listeners = new Map();
   const saved = [];
   const guessButton = {
@@ -25,6 +25,10 @@ test("a React Duel snapshot reaches SAVE_ROUND with the player's result", async 
   const location = { pathname: "/multiplayer", href: "https://www.geoguessr.com/multiplayer", origin: "https://www.geoguessr.com" };
   const window = {
     RoundScoutCapture: capture,
+    RoundScoutCountryResolver: {
+      countryCode: async point => point.lat > 49 ? "BE" : "FR",
+      region: async (_point, country) => ({ name: country === "BE" ? "Wallonia" : "Grand Est" })
+    },
     location,
     addEventListener(type, handler) { listeners.set(type, handler); },
     postMessage() {}
@@ -37,9 +41,6 @@ test("a React Duel snapshot reaches SAVE_ROUND with the player's result", async 
         if (message.type === "SAVE_ROUND") {
           saved.push(message.row);
           callback({ ok: true, row: message.row });
-        } else if (message.type === "FETCH_MATCH_DETAILS") {
-          const latitude = Number(new URL(message.url).searchParams.get("latitude"));
-          callback({ data: latitude > 49 ? { countryCode: "BE", principalSubdivision: "Wallonia" } : { countryCode: "FR", principalSubdivision: "Grand Est" } });
         } else callback?.({ ok: true });
       }
     },
@@ -78,24 +79,42 @@ test("a React Duel snapshot reaches SAVE_ROUND with the player's result", async 
     teams: [
       {
         id: "blue",
-        players: [{ playerId: "me", guesses: [{ roundNumber: 1, lat: 50.5, lng: 4.2, score: 4200 }] }],
-        roundResults: [{ roundNumber: 1, score: 4200 }]
+        players: [{ playerId: "me", guesses: [
+          { roundNumber: 1, lat: 50.5, lng: 4.2, score: 4200, distance: 580105 },
+          { roundNumber: 2, lat: 40.5, lng: 2.2, score: 3000, distance: 7563 }
+        ] }],
+        roundResults: [{ roundNumber: 1, score: 4200 }, { roundNumber: 2, score: 3000 }]
       },
       {
         id: "red",
-        players: [{ playerId: "opponent", guesses: [{ roundNumber: 1, lat: 46.5, lng: 2.2, score: 3500 }] }],
-        roundResults: [{ roundNumber: 1, score: 3500 }]
+        players: [{ playerId: "opponent", guesses: [
+          { roundNumber: 1, lat: 46.5, lng: 2.2, score: 3500 },
+          { roundNumber: 2, lat: 51.5, lng: 4.5, score: 2500 }
+        ] }],
+        roundResults: [{ roundNumber: 1, score: 3500 }, { roundNumber: 2, score: 2500 }]
       }
     ],
-    rounds: [{ roundNumber: 1, panorama: { lat: 48.5, lng: 2.3, countryCode: "fr" } }]
+    rounds: [
+      { roundNumber: 1, panorama: { lat: 48.5, lng: 2.3, countryCode: "fr" } },
+      { roundNumber: 2, panorama: { lat: 52.5, lng: 4.3, countryCode: "be" } }
+    ]
   };
   listeners.get("message")({ source: window, data: { source: "GG_STUDY_PROBE", url: "react://duel-state", payload: snapshot } });
   await new Promise(resolve => setTimeout(resolve, 30));
 
-  assert.equal(saved.length, 1);
+  assert.equal(saved.length, 2);
   assert.equal(saved[0].gameId, "duel-e2e");
   assert.equal(saved[0].actualCode, "FR");
   assert.equal(saved[0].guessedCode, "BE");
   assert.equal(saved[0].score, 4200);
   assert.equal(saved[0].damage, 700);
+  assert.equal(saved[0].actualRegion, "Grand Est");
+  assert.equal(saved[0].guessedRegion, "Wallonia");
+  assert.equal(saved[1].roundNumber, 2);
+  assert.equal(saved[1].actualCode, "BE");
+  assert.equal(saved[1].guessedCode, "FR");
+  assert.equal(saved[1].score, 3000);
+  assert.equal(saved[1].damage, 500);
+  assert.equal(saved[1].actualRegion, "Wallonia");
+  assert.equal(saved[1].guessedRegion, "Grand Est");
 });

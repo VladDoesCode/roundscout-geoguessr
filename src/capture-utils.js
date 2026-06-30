@@ -88,9 +88,13 @@
       seen.add(value);
       const localId = directGameId(value) || inheritedId;
       if (activeId && localId && localId !== activeId) return;
-      if (!result.id && localId) result.id = localId;
-      if (Array.isArray(value.teams)) result.teams.push(value.teams);
-      if (Array.isArray(value.rounds)) result.rounds.push(value.rounds);
+      const hasTeams = Array.isArray(value.teams);
+      const hasRounds = Array.isArray(value.rounds);
+      // Match-history and competitive-progress payloads also contain gameId fields.
+      // An id is a live Duel candidate only when its branch carries actual game state.
+      if ((hasTeams || hasRounds) && !result.id && localId) result.id = localId;
+      if (hasTeams) result.teams.push(value.teams);
+      if (hasRounds) result.rounds.push(value.rounds);
 
       if (Array.isArray(value)) {
         value.forEach(child => walk(child, localId, depth + 1));
@@ -105,5 +109,23 @@
     return result;
   }
 
-  return { collectDuelFragments, mergeObject, selectClassic };
+  function duelRoundInProgress(currentRoundNumber, teams) {
+    const current = Number(currentRoundNumber) || 0;
+    if (!current || !Array.isArray(teams)) return false;
+    let completed = 0;
+    for (const team of teams) {
+      const results = [team?.roundResults, team?.results].find(Array.isArray) || [];
+      results.forEach((result, index) => {
+        if (!result || typeof result !== "object") return;
+        const scored = [result.score, result.points, result.damageDealt, result.healthAfter]
+          .some(value => Number.isFinite(Number(value)));
+        if (!scored) return;
+        const round = Number(result.roundNumber ?? result.round) || index + 1;
+        completed = Math.max(completed, round);
+      });
+    }
+    return current > completed;
+  }
+
+  return { collectDuelFragments, duelRoundInProgress, mergeObject, selectClassic };
 });

@@ -41,11 +41,34 @@
           <p class="eyebrow">Post-round GeoGuessr intelligence</p>
           <h2>What to study next</h2>
         </div>
-        <div class="system-status">
-          <span class="pulse-indicator"></span>
-          Local storage sync active
+        <div class="header-tools">
+          <div class="system-status">
+            <span class="pulse-indicator"></span>
+            Local storage sync active
+          </div>
+          <button id="diagnostic-toggle" class="diagnostic-toggle" type="button" title="Developer diagnostics" aria-label="Developer diagnostics" aria-expanded="false" aria-controls="diagnostic-panel">&gt;_</button>
         </div>
       </header>
+
+      <section id="diagnostic-panel" class="diagnostic-card" aria-labelledby="diagnostic-title" hidden>
+        <div class="diagnostic-copy">
+          <p class="eyebrow">Developer tools <span id="diagnostic-version"></span></p>
+          <h3 id="diagnostic-title">Duels diagnostics</h3>
+          <p>Clear this log, hard-refresh GeoGuessr, play one Duel, then download the report and attach it in our chat. It records only compact state shapes and decisions, never raw GeoGuessr traffic or coordinates.</p>
+        </div>
+        <div class="diagnostic-status" aria-live="polite">
+          <span><strong id="diagnostic-count">0</strong> events</span>
+          <span id="diagnostic-latest">Waiting for GeoGuessr...</span>
+        </div>
+        <div class="diagnostic-actions">
+          <button id="diagnostic-download" class="action-btn diagnostic-primary">Download diagnostics</button>
+          <button id="diagnostic-clear" class="action-btn src-secondary">Clear test log</button>
+        </div>
+        <details class="diagnostic-preview">
+          <summary>Preview recent events</summary>
+          <pre id="diagnostic-log">No diagnostic events yet.</pre>
+        </details>
+      </section>
 
       <section class="metrics-grid" aria-label="Summary metrics">
         <div class="metric-card" id="metric-total-rounds">

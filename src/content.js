@@ -9,7 +9,7 @@
   const geoMemo = new Map();
   const guideMemo = new Map();
   const memoryStore = { ggStudyRounds: [] };
-  const duelState = { id: "", teams: null, rounds: null, guesses: new Map(), completed: new Set(), lastFetch: 0, lastUpdate: 0, revealUntil: 0, latestGuess: null };
+  const duelState = { id: "", teams: null, rounds: null, currentRoundNumber: 0, status: "", guesses: new Map(), completed: new Set(), lastFetch: 0, lastUpdate: 0, revealUntil: 0, latestGuess: null };
   const classicState = { token: "", submissions: new Map(), latestSubmission: null, details: new Map(), fetching: new Map(), lastFetch: new Map() };
   const pageRequests = new Map();
   const capture = window.RoundScoutCapture;
@@ -23,6 +23,79 @@
   let duelDiscoveryAt = 0;
   let duelDiscoveryLoading = false;
   let visualRenderToken = 0;
+  let routeContext = "";
+  const DIAGNOSTIC_KEY = "roundScoutDiagnostics";
+  const DIAGNOSTIC_LIMIT = 220;
+  const diagnosticSession = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  const diagnosticTimes = new Map();
+  let diagnosticQueue = [];
+  let diagnosticTimer = 0;
+  let diagnosticWriting = false;
+
+  function cleanDiagnostic(value, depth = 0) {
+    if (depth > 4 || value == null) return value == null ? null : "[depth]";
+    if (typeof value === "string") return value.split("?")[0].slice(0, 220);
+    if (["number", "boolean"].includes(typeof value)) return value;
+    if (Array.isArray(value)) return value.slice(0, 16).map(item => cleanDiagnostic(item, depth + 1));
+    if (typeof value !== "object") return String(value).slice(0, 80);
+    const out = {};
+    for (const [key, item] of Object.entries(value).slice(0, 36)) out[key] = cleanDiagnostic(item, depth + 1);
+    return out;
+  }
+
+  function diagnostic(event, data = {}, minInterval = 0, signature = "") {
+    if (!isContextValid()) return;
+    const safe = cleanDiagnostic(data);
+    const key = `${event}|${signature || JSON.stringify(safe).slice(0, 600)}`;
+    const now = Date.now();
+    if (minInterval && now - (diagnosticTimes.get(key) || 0) < minInterval) return;
+    diagnosticTimes.set(key, now);
+    diagnosticQueue.push({ t: now, session: diagnosticSession, source: "content", event, data: safe });
+    if (!diagnosticTimer) diagnosticTimer = setTimeout(flushDiagnostics, 350);
+  }
+
+  async function flushDiagnostics() {
+    diagnosticTimer = 0;
+    if (diagnosticWriting || !diagnosticQueue.length) return;
+    diagnosticWriting = true;
+    const pending = diagnosticQueue.splice(0);
+    try {
+      const stored = await storageGet(DIAGNOSTIC_KEY);
+      const existing = Array.isArray(stored[DIAGNOSTIC_KEY]) ? stored[DIAGNOSTIC_KEY] : [];
+      await storageSet({ [DIAGNOSTIC_KEY]: [...existing, ...pending].slice(-DIAGNOSTIC_LIMIT) });
+    } finally {
+      diagnosticWriting = false;
+      if (diagnosticQueue.length && !diagnosticTimer) diagnosticTimer = setTimeout(flushDiagnostics, 350);
+    }
+  }
+
+  function duelDiagnostic(extra = {}) {
+    return {
+      path: cleanPath().slice(0, 120),
+      game: String(duelState.id || getGameIdFromUrl() || "").slice(-12),
+      teams: Array.isArray(duelState.teams) ? duelState.teams.length : 0,
+      rounds: Array.isArray(duelState.rounds) ? duelState.rounds.length : 0,
+      currentRound: duelState.currentRoundNumber,
+      status: duelState.status,
+      bankedRounds: [...duelState.guesses.keys()].slice(0, 20),
+      completed: duelState.completed.size,
+      identity: { id: Boolean(me.id), name: Boolean(me.name), team: Boolean(myTeam(duelState.teams)) },
+      ...extra
+    };
+  }
+
+  function guessDiagnostic(value) {
+    return {
+      exists: Boolean(value),
+      round: roundNo(value, 0),
+      coords: Boolean(guessCoords(value)),
+      country: code(value) || "",
+      score: hasNumericScore(value) ? score(value) : null,
+      distance: hasDistance(value) ? Math.round(distance(value)) : null,
+      noGuess: noGuess(value),
+      keys: value && typeof value === "object" ? Object.keys(value).slice(0, 24) : []
+    };
+  }
 
   const countryDisplay = (() => {
     try { return new Intl.DisplayNames(["en"], { type: "region" }); } catch (e) { return null; }
@@ -140,15 +213,31 @@
 
   function show(round) {
     const el = panel();
-    if (!el) return;
+    if (!el) {
+      diagnostic("popup-skip", { reason: "panel-unavailable", round: round?.roundNumber || 0 });
+      return;
+    }
     const nextFingerprint = displayFingerprint(round);
     const nextRoundKey = displayRoundKey(round);
-    if (nextRoundKey && nextRoundKey === dismissedRoundKey) return;
-    if (nextFingerprint === dismissedFingerprint) return;
+    if (nextRoundKey && nextRoundKey === dismissedRoundKey) {
+      diagnostic("popup-skip", { reason: "round-dismissed", round: round?.roundNumber || 0 }, 3000);
+      return;
+    }
+    if (nextFingerprint === dismissedFingerprint) {
+      diagnostic("popup-skip", { reason: "result-dismissed", round: round?.roundNumber || 0 }, 3000);
+      return;
+    }
     if (nextFingerprint === lastShownFingerprint && el.style.display !== "none") return;
     lastShownFingerprint = nextFingerprint;
     el.dataset.roundKey = nextRoundKey;
     el.style.display = "flex";
+    diagnostic("popup-show", {
+      round: round.roundNumber,
+      actual: round.actualCode || "",
+      guessed: round.guessedCode || "",
+      score: Math.round(round.score || 0),
+      damage: Math.round(round.damage || 0)
+    });
     text("ggs-mode-badge", round.mode.toUpperCase());
     text("ggs-round-title", `Round ${round.roundNumber}`);
     text("ggs-stat-score", round.score ? Math.round(round.score) : "-");
@@ -376,7 +465,7 @@
 
   function gamePath() {
     const p = cleanPath();
-    return /\/(game|challenge|multiplayer|duels?|team-duels|live-challenge)(\/|$)/i.test(p);
+    return /\/(game|challenge|results|multiplayer|duels?|team-duels|live-challenge)(\/|$)/i.test(p);
   }
 
   function duelPath() {
@@ -605,7 +694,7 @@
 
   function addTargetCandidate(candidates, source, priority, value) {
     if (!value || typeof value !== "object") return;
-    const targetCode = priority <= 2 ? code(value) : "";
+    const targetCode = code(value);
     const point = pointFrom(value);
     if (!targetCode && !point) return;
     const key = `${targetCode || ""}|${point ? point.lat.toFixed(5) + "," + point.lng.toFixed(5) : ""}`;
@@ -647,7 +736,7 @@
     return delta <= tolerance;
   }
 
-  function duelTarget(round, guessedPoint, reportedDistance) {
+  function duelTarget(round, guessedPoint, reportedDistance, trustScoredRound = false) {
     const candidates = duelTargetCandidates(round);
     const hasPointCandidates = candidates.some(candidate => candidate.point);
     const matched = candidates
@@ -671,6 +760,16 @@
         .filter(candidate => candidate.point)
         .sort((a, b) => a.priority - b.priority)[0];
       if (fallbackPoint) return fallbackPoint;
+    }
+
+    // A panorama attached to the same numbered, scored round in the active game
+    // is authoritative. The redesigned Duels API can report a distance whose
+    // calculation differs slightly from our local haversine check.
+    if (trustScoredRound) {
+      const authoritative = candidates
+        .filter(candidate => candidate.code || candidate.point)
+        .sort((a, b) => a.priority - b.priority)[0];
+      if (authoritative) return { ...authoritative, trustedFallback: true };
     }
 
     return { code: "", point: null };
@@ -742,35 +841,33 @@
     });
   }
 
-  async function geoMeta(point) {
+  async function geoMeta(point, knownCode = "") {
     if (!point || !isContextValid()) return { countryCode: "", region: "" };
     const key = `${point.lat.toFixed(5)},${point.lng.toFixed(5)}`;
-    if (geoMemo.has(key)) return geoMemo.get(key);
-    const url = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${point.lat}&longitude=${point.lng}&localityLanguage=en`;
-    return new Promise(resolve => {
-      try {
-        chrome.runtime.sendMessage({ type: "FETCH_MATCH_DETAILS", url }, res => {
-          if (chrome.runtime?.lastError) {
-            resolve({ countryCode: "", region: "" });
-            return;
-          }
-          const data = res?.data || {};
-          const result = {
-            countryCode: cc(data.countryCode),
-            region: data.principalSubdivision || data.locality || data.city || ""
-          };
-          // Only cache successful lookups; a transient bigdatacloud failure should not poison every later round.
-          if (result.countryCode || result.region) geoMemo.set(key, result);
-          resolve(result);
-        });
-      } catch (err) {
-        resolve({ countryCode: "", region: "" });
-      }
-    });
-  }
+    if (geoMemo.has(key)) return await geoMemo.get(key);
 
-  async function geocode(point) {
-    return (await geoMeta(point)).countryCode;
+    const pending = (async () => {
+      let localCode = cc(knownCode);
+      if (!localCode) {
+        try {
+          localCode = cc(await window.RoundScoutCountryResolver?.countryCode(point));
+        } catch (e) {}
+      }
+      let localRegion = "";
+      try {
+        const region = await window.RoundScoutCountryResolver?.region(point, localCode);
+        localRegion = region?.name || "";
+      } catch (e) {}
+      const result = { countryCode: localCode, region: localRegion };
+      diagnostic("geo-resolve", { final: localCode, region: localRegion, source: knownCode ? "round+local-region" : "local-boundaries" }, 0, key);
+      return result;
+    })();
+
+    geoMemo.set(key, pending);
+    const result = await pending;
+    if (result.countryCode || result.region) geoMemo.set(key, result);
+    else geoMemo.delete(key);
+    return result;
   }
 
   function rowFromRound(round) {
@@ -793,13 +890,21 @@
   function pageFetchJson(url, timeoutMs = 6000) {
     if (!isContextValid()) return Promise.resolve(null);
     const requestId = `ggs_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const path = (() => { try { return new URL(url, location.href).pathname; } catch (e) { return String(url).split("?")[0]; } })();
+    diagnostic("page-fetch-start", { path }, 3000, path);
     return new Promise(resolve => {
       const timer = setTimeout(() => {
         pageRequests.delete(requestId);
+        diagnostic("page-fetch-timeout", { path, timeoutMs }, 2000, path);
         resolve(null);
       }, timeoutMs);
       pageRequests.set(requestId, value => {
         clearTimeout(timer);
+        diagnostic("page-fetch-result", {
+          path,
+          received: Boolean(value),
+          keys: value && typeof value === "object" ? Object.keys(value).slice(0, 24) : []
+        }, 3000, `${path}|${Boolean(value)}|${Object.keys(value || {}).slice(0, 16).join(",")}`);
         resolve(value);
       });
       window.postMessage({ source: "GG_STUDY_FETCH_REQUEST", requestId, url }, window.location.origin);
@@ -864,18 +969,39 @@
   }
 
   async function save(round) {
-    if (!isContextValid()) return null;
+    if (!isContextValid()) {
+      diagnostic("save-result", { ok: false, reason: "extension-context-invalid", round: round?.roundNumber || 0 });
+      return null;
+    }
     const row = rowFromRound(round);
     const fingerprint = rowFingerprint(row);
-    if (savedFingerprints.get(row.id) === fingerprint) return row;
+    if (savedFingerprints.get(row.id) === fingerprint) {
+      diagnostic("save-skip", { reason: "unchanged", round: row.roundNumber, actual: row.actualCode, guessed: row.guessedCode }, 5000, row.id);
+      return row;
+    }
+    diagnostic("save-attempt", {
+      game: String(row.gameId || "").slice(-12),
+      round: row.roundNumber,
+      actual: row.actualCode,
+      guessed: row.guessedCode,
+      score: row.score,
+      distance: row.distance,
+      damage: row.damage
+    });
     const response = await sendMessage({ type: "SAVE_ROUND", row });
     if (response?.ok && response.row) {
       savedFingerprints.set(row.id, rowFingerprint(response.row));
+      diagnostic("save-result", { ok: true, route: "background", round: row.roundNumber, total: response.total || null });
       return response.row;
     }
-    if (!hasStorage()) return null;
+    diagnostic("save-background-failed", { round: row.roundNumber, response: response ? cleanDiagnostic(response) : null });
+    if (!hasStorage()) {
+      diagnostic("save-result", { ok: false, reason: "no-storage", round: row.roundNumber });
+      return null;
+    }
     const saved = await saveDirect(row);
     if (saved) savedFingerprints.set(row.id, rowFingerprint(saved));
+    diagnostic("save-result", { ok: Boolean(saved), route: "direct", round: row.roundNumber });
     return saved;
   }
 
@@ -923,21 +1049,25 @@
     return result;
   }
 
-  function remember(value) {
+  function remember(value, trusted = false) {
     if (!value || typeof value !== "object") return;
     const id = value.id || value.userId || value.playerId || value.player?.id || value.user?.id;
     const name = value.nick || value.nickname || value.name || value.username || value.displayName || value.player?.nick || value.user?.nick;
-    if (id) me.id = String(id);
-    if (name) me.name = norm(name);
+    const nextId = id ? String(id) : "";
+    const nextName = name ? norm(name) : "";
+    if (nextId && (!me.id || me.id === nextId || trusted)) me.id = nextId;
+    if (nextName && (!me.name || me.name === nextName || trusted)) me.name = nextName;
   }
 
   function learn(value, depth = 0) {
     if (!value || typeof value !== "object" || depth > 5) return;
-    for (const key of ["me", "viewer", "currentUser", "currentPlayer", "localPlayer"]) remember(value[key]);
+    for (const key of ["me", "viewer", "currentUser"]) remember(value[key], true);
+    for (const key of ["currentPlayer", "localPlayer"]) remember(value[key]);
     if (value.viewerId || value.currentUserId || value.currentPlayerId || value.localPlayerId) {
-      me.id = String(value.viewerId || value.currentUserId || value.currentPlayerId || value.localPlayerId);
+      const learnedId = String(value.viewerId || value.currentUserId || value.currentPlayerId || value.localPlayerId);
+      if (!me.id || me.id === learnedId) me.id = learnedId;
     }
-    if (value.isMe || value.isViewer || value.isCurrentUser || value.isSelf || value.isLocalPlayer) remember(value);
+    if (value.isMe || value.isViewer || value.isCurrentUser || value.isSelf || value.isLocalPlayer) remember(value, true);
     for (const [key, child] of Object.entries(value)) {
       if (child && typeof child === "object" && !/round|guess|opponent|enemy|rival/i.test(key)) learn(child, depth + 1);
     }
@@ -952,7 +1082,7 @@
         const data = await res.json();
         if (data) {
           const profile = data.user || data;
-          remember(profile);
+          remember(profile, true);
           learn(data);
         }
       }
@@ -1000,7 +1130,10 @@
   }
 
   async function fetchDuelState(id) {
-    if (!id || duelStateLoading === id) return;
+    if (!id || duelStateLoading === id) {
+      diagnostic("duel-fetch-skip", duelDiagnostic({ reason: !id ? "missing-id" : "already-loading" }), 2000);
+      return;
+    }
     duelState.lastFetch = Date.now();
     duelStateLoading = id;
     try {
@@ -1008,18 +1141,24 @@
       duelState.id = id;
       const encoded = encodeURIComponent(id);
       const urls = [
+        `${location.origin}/api/duels/${encoded}`,
         `https://game-server.geoguessr.com/api/duels/${encoded}`,
         `https://game-server.geoguessr.com/api/duels/${encoded}/summary`,
         `${location.origin}/api/v4/duels/${encoded}`
       ];
       for (const url of urls) {
         const data = await pageFetchJson(url);
-        if (!data) continue;
+        if (!data) {
+          diagnostic("duel-fetch-empty", duelDiagnostic({ path: new URL(url).pathname }), 2000, new URL(url).pathname);
+          continue;
+        }
         if (duelState.id !== id) return;
         rememberDuelParts(data);
+        diagnostic("duel-fetch-accepted", duelDiagnostic({ path: new URL(url).pathname }));
         if (duelState.teams?.length && duelState.rounds?.length) break;
       }
     } catch (e) {
+      diagnostic("duel-fetch-error", duelDiagnostic({ name: e?.name || "Error", message: String(e?.message || e).slice(0, 160) }));
       console.error("[GeoGuessr Tracker] Failed to fetch duel state:", e);
     } finally {
       if (duelStateLoading === id) duelStateLoading = "";
@@ -1042,10 +1181,14 @@
         rememberDuelParts(data);
         const id = gameId(data) || duelState.id;
         if (id) {
+          diagnostic("duel-discovered", duelDiagnostic({ path: new URL(url).pathname }));
           await fetchDuelState(id);
           return id;
         }
       }
+      diagnostic("duel-discovery-empty", duelDiagnostic(), 5000, cleanPath());
+    } catch (e) {
+      diagnostic("duel-discovery-error", duelDiagnostic({ name: e?.name || "Error", message: String(e?.message || e).slice(0, 160) }), 3000);
     } finally {
       duelDiscoveryLoading = false;
     }
@@ -1087,7 +1230,7 @@
         const raw = /user|profile|session|account|geoguessr/i.test(key) ? localStorage.getItem(key) : "";
         if (raw && raw[0] === "{" && raw.length < 250000) {
           const data = JSON.parse(raw);
-          remember(data.user || data.profile || data.account);
+          remember(data.user || data.profile || data.account, true);
           learn(data);
         }
       }
@@ -1206,7 +1349,7 @@
   function tokenFromUrl(url = location.href) {
     const api = String(url).match(/\/api\/v3\/(?:games|results)\/([^/?#]+)/i);
     if (api?.[1]) return decodeURIComponent(api[1]);
-    const path = String(url).match(/\/(?:game|challenge)\/([^/?#]+)/i);
+    const path = String(url).match(/\/(?:game|challenge|results)\/([^/?#]+)/i);
     return path?.[1] ? decodeURIComponent(path[1]) : "";
   }
 
@@ -1214,6 +1357,29 @@
     const match = String(url || "").match(/\/api\/duels\/([^/?#]+)/i);
     const id = match?.[1] ? decodeURIComponent(match[1]) : "";
     return id && !/^(?:ongoing|matchmaking|queue|history|summary)$/i.test(id) ? id : "";
+  }
+
+  function syncRouteContext() {
+    const classicTokenOnPage = duelPath() ? "" : tokenFromUrl();
+    const next = duelPath()
+      ? `duel:${getGameIdFromUrl() || cleanPath()}`
+      : classicTokenOnPage
+        ? `classic:${classicTokenOnPage}`
+        : `page:${cleanPath()}`;
+    if (next === routeContext) return;
+    const previous = routeContext;
+    routeContext = next;
+    cache.length = 0;
+    replayAt = 0;
+    dismissedFingerprint = "";
+    dismissedRoundKey = "";
+    if (classicTokenOnPage && classicState.token !== classicTokenOnPage) {
+      classicState.token = classicTokenOnPage;
+      classicState.latestSubmission = null;
+    }
+    const el = document.getElementById("ggs-overlay-panel");
+    if (el) el.style.display = "none";
+    diagnostic("route-change", { previous: previous.slice(0, 100), next: next.slice(0, 100) });
   }
 
   function noGuess(value) {
@@ -1242,6 +1408,7 @@
       const storeRound = roundNumber || duelState.rounds?.length || 1;
       rememberGuess(storeRound, candidate);
       duelState.latestGuess = { value: candidate, at: Date.now() };
+      diagnostic("guess-submitted", duelDiagnostic({ storedRound: storeRound, guess: guessDiagnostic(candidate), path: (() => { try { return new URL(url, location.href).pathname; } catch (e) { return String(url).split("?")[0]; } })() }));
       return;
     }
 
@@ -1263,15 +1430,19 @@
   }
 
   function resetDuelState(id = "") {
+    const previous = duelState.id;
     duelState.id = id;
     duelState.teams = null;
     duelState.rounds = null;
+    duelState.currentRoundNumber = 0;
+    duelState.status = "";
     duelState.guesses = new Map();
     duelState.completed = new Set();
     duelState.lastFetch = 0;
     duelState.lastUpdate = 0;
     duelState.revealUntil = 0;
     duelState.latestGuess = null;
+    diagnostic("duel-reset", { previous: String(previous || "").slice(-12), next: String(id || "").slice(-12), path: cleanPath().slice(0, 120) });
   }
 
   function getActiveGameId() {
@@ -1300,6 +1471,40 @@
   function mergeArray(oldArray, newArray) {
     if (!Array.isArray(oldArray)) return newArray;
     if (!Array.isArray(newArray)) return oldArray;
+
+    const itemKey = item => {
+      if (!item || typeof item !== "object") return "";
+      const identity = item.teamId || item.playerId || item.userId || item.accountId || item.id;
+      if (identity != null && typeof identity !== "object") return `id:${identity}`;
+      const explicitRound = Number(item.roundNumber ?? item.round);
+      if (Number.isFinite(explicitRound) && explicitRound > 0) return `round:${explicitRound}`;
+      const roundIndex = Number(item.roundIndex);
+      if (Number.isFinite(roundIndex) && roundIndex >= 0) return `round:${roundIndex + 1}`;
+      return "";
+    };
+
+    const oldKeys = oldArray.map(itemKey);
+    const newKeys = newArray.map(itemKey);
+    if (newKeys.some(Boolean) && oldKeys.some(Boolean)) {
+      const oldByKey = new Map();
+      oldArray.forEach((item, index) => {
+        const key = oldKeys[index];
+        if (key) oldByKey.set(key, item);
+      });
+      const used = new Set();
+      const merged = newArray.map((item, index) => {
+        const key = newKeys[index];
+        if (!key || !oldByKey.has(key)) return item;
+        used.add(key);
+        return mergeObject(oldByKey.get(key), item);
+      });
+      oldArray.forEach((item, index) => {
+        const key = oldKeys[index];
+        if (key && !used.has(key) && !newKeys.includes(key)) merged.push(item);
+      });
+      return merged;
+    }
+
     const max = Math.max(oldArray.length, newArray.length);
     return Array.from({ length: max }, (_, index) => mergeObject(oldArray[index], newArray[index]));
   }
@@ -1380,7 +1585,12 @@
     if (banked) out.push(banked);
     // Include every banked pin in case the submission landed under the wrong round index (rounds not yet loaded).
     duelState.guesses.forEach((guess) => { if (guess && guess !== banked) out.push(guess); });
-    return out.filter(Boolean);
+    const expectedRound = index + 1;
+    return out.filter(item => {
+      if (!item) return false;
+      const explicitRound = roundNo(item, 0);
+      return !explicitRound || explicitRound === expectedRound;
+    });
   }
 
   function pointsSame(a, b) {
@@ -1391,6 +1601,9 @@
   function compatibleGuess(base, candidate) {
     if (!base || !candidate || base === candidate) return false;
     if (!guessCoords(candidate) && !code(candidate)) return false;
+    const baseRound = roundNo(base, 0);
+    const candidateRound = roundNo(candidate, 0);
+    if (baseRound && candidateRound && baseRound !== candidateRound) return false;
     // Same map pin = same guess, even when the player identity could not be resolved.
     const basePoint = guessCoords(base);
     const candidatePoint = guessCoords(candidate);
@@ -1493,6 +1706,24 @@
     }
   }
 
+  function latestResolvedRound(team) {
+    if (!team) return 0;
+    const values = [...guessPools(team).flat()];
+    for (const player of teamPlayers(team)) values.push(...guessPools(player).flat());
+    return values
+      .filter(value => hasScore(value) || hasDistance(value) || noGuess(value))
+      .map(value => roundNo(value, 0))
+      .reduce((latest, value) => Math.max(latest, value), 0);
+  }
+
+  function duelRoundInProgress() {
+    if (capture?.duelRoundInProgress) return capture.duelRoundInProgress(duelState.currentRoundNumber, duelState.teams);
+    const current = Number(duelState.currentRoundNumber) || 0;
+    if (!current || !Array.isArray(duelState.teams)) return false;
+    const completed = duelState.teams.reduce((latest, team) => Math.max(latest, latestResolvedRound(team)), 0);
+    return current > completed;
+  }
+
   function guessFor(round, root, teams, index) {
     const banked = duelState.guesses.get(index + 1);
     const guesses = roundGuesses(round);
@@ -1506,15 +1737,17 @@
     }
 
     if (banked) return banked;
+    const expectedRound = index + 1;
+    const latestRound = latestResolvedRound(team);
     // Fall back to the most recently submitted pin (it may have been banked before the round index was known).
-    if (duelState.latestGuess && Date.now() - duelState.latestGuess.at < 180000) {
+    if ((!latestRound || expectedRound === latestRound) && duelState.latestGuess && Date.now() - duelState.latestGuess.at < 180000) {
       return duelState.latestGuess.value;
     }
     // Last resort: pull a player pin directly from the teams (handles the case
     // where the submission wasn't captured but the WebSocket state includes it).
-    if (team) {
+    if (team && (!latestRound || expectedRound === latestRound)) {
       for (const player of teamPlayers(team)) {
-        const pin = playerPinGuess(player, index + 1);
+        const pin = playerPinGuess(player, expectedRound);
         if (pin) return pin;
       }
     }
@@ -1579,15 +1812,23 @@
   }
 
   async function processDuel(state) {
-    if (!duelPath()) return null;
+    if (!duelPath()) {
+      diagnostic("duel-process-skip", { reason: "not-duel-path", path: cleanPath().slice(0, 120) }, 5000);
+      return null;
+    }
     
     const activeId = state.id || getActiveGameId();
     const activeRounds = state.rounds;
     const activeTeams = state.teams;
     
     if (!activeId || !Array.isArray(activeRounds) || !activeRounds.length || !Array.isArray(activeTeams) || !activeTeams.length) {
+      diagnostic("duel-process-skip", duelDiagnostic({
+        reason: !activeId ? "missing-game-id" : !Array.isArray(activeRounds) || !activeRounds.length ? "missing-rounds" : "missing-teams"
+      }), 3000);
       return null;
     }
+
+    diagnostic("duel-process", duelDiagnostic({ activeGuess: activeGuessVisible(), resultVisible: resultVisible() }), 5000, `${activeId}|${activeRounds.length}|${activeTeams.length}|${duelState.guesses.size}`);
 
     let latest = null;
     let newlyResolved = null;
@@ -1596,23 +1837,54 @@
       if (!round) continue;
       
       const roundNumber = n(round.roundNumber, round.round, i + 1);
-      
-      const guess = enrichGuess(guessFor(round, state, activeTeams, i), round, activeTeams, i);
-      if (!guess) continue;
-      if (!hasScore(guess) && !hasDistance(guess)) continue;
+
+      const initialGuess = guessFor(round, state, activeTeams, i);
+      const guess = enrichGuess(initialGuess, round, activeTeams, i);
+      const candidates = guessDetailCandidates(round, activeTeams, i);
+      diagnostic("round-evaluate", duelDiagnostic({
+        round: roundNumber,
+        roundKeys: Object.keys(round).slice(0, 28),
+        initialGuess: guessDiagnostic(initialGuess),
+        mergedGuess: guessDiagnostic(guess),
+        candidateCount: candidates.length,
+        candidateShapes: candidates.slice(0, 5).map(guessDiagnostic)
+      }), 8000, `${activeId}|${roundNumber}|${JSON.stringify(guessDiagnostic(guess))}`);
+      if (!guess) {
+        diagnostic("round-reject", duelDiagnostic({ round: roundNumber, reason: "no-player-guess", candidateCount: candidates.length }), 8000, `${activeId}|${roundNumber}|no-player-guess`);
+        continue;
+      }
+      if (!hasScore(guess) && !hasDistance(guess)) {
+        diagnostic("round-reject", duelDiagnostic({ round: roundNumber, reason: "guess-not-scored", guess: guessDiagnostic(guess) }), 8000, `${activeId}|${roundNumber}|guess-not-scored`);
+        continue;
+      }
       const playerGuess = guess;
       
       const guessedPoint = guessCoords(playerGuess);
       const reportedDistance = hasDistance(playerGuess) ? distance(playerGuess) : null;
-      const target = duelTarget(round, guessedPoint, reportedDistance);
+      const exactScoredRound = roundNo(playerGuess, 0) === roundNumber && hasNumericScore(playerGuess);
+      const target = duelTarget(round, guessedPoint, reportedDistance, exactScoredRound);
       const actualPoint = target.point;
-      const actualMeta = await geoMeta(actualPoint);
+      if (target.trustedFallback) {
+        diagnostic("target-fallback", duelDiagnostic({ round: roundNumber, source: target.source, exactScoredRound }));
+      }
+      const actualMeta = await geoMeta(actualPoint, target.code);
       let actual = target.code || actualMeta.countryCode;
-      if (!actual) continue;
+      if (!actual) {
+        diagnostic("round-reject", duelDiagnostic({
+          round: roundNumber,
+          reason: "target-unresolved",
+          targetCandidates: duelTargetCandidates(round).map(candidate => ({ source: candidate.source, code: candidate.code || "", point: Boolean(candidate.point), priority: candidate.priority })),
+          guess: guessDiagnostic(playerGuess)
+        }), 8000, `${activeId}|${roundNumber}|target-unresolved`);
+        continue;
+      }
 
       const guessedMeta = await geoMeta(guessedPoint);
       let guessed = code(playerGuess) || code(playerGuess.guess) || guessedMeta.countryCode;
-      if (!guessed && !noGuess(playerGuess)) continue;
+      if (!guessed && !noGuess(playerGuess)) {
+        diagnostic("round-reject", duelDiagnostic({ round: roundNumber, reason: "guess-country-unresolved", guess: guessDiagnostic(playerGuess) }), 8000, `${activeId}|${roundNumber}|guess-country-unresolved`);
+        continue;
+      }
       
       const baseDamage = getRoundDamage(round, activeTeams, i, playerGuess);
       const dist = reportedDistance || metersBetween(actualPoint, guessedPoint);
@@ -1629,7 +1901,10 @@
         score: score(playerGuess),
         damage: baseDamage
       });
-      if (!saved) continue;
+      if (!saved) {
+        diagnostic("round-reject", duelDiagnostic({ round: roundNumber, reason: "save-failed", actual: cc(actual), guessed: cc(guessed) }), 8000, `${activeId}|${roundNumber}|save-failed`);
+        continue;
+      }
       latest = saved;
       const resolvedKey = `${activeId}_${roundNumber}`;
       if (!duelState.completed.has(resolvedKey)) {
@@ -1640,22 +1915,36 @@
     
     // A newly scored round is the authoritative reveal signal. GeoGuessr can leave
     // stale result controls in the DOM, so resultVisible() is intentionally not required.
-    if (newlyResolved && !activeGuessVisible()) {
+    if (newlyResolved && !activeGuessVisible() && !duelRoundInProgress()) {
       duelState.revealUntil = Date.now() + 15000;
+      diagnostic("popup-decision", duelDiagnostic({ action: "show-new", round: newlyResolved.roundNumber }));
       show(newlyResolved);
     }
-    else if (latest && resultVisible()) show(latest);
+    else if (latest && resultVisible() && !duelRoundInProgress()) {
+      diagnostic("popup-decision", duelDiagnostic({ action: "show-visible-result", round: latest.roundNumber }), 2500);
+      show(latest);
+    } else if (newlyResolved) {
+      diagnostic("popup-decision", duelDiagnostic({ action: "blocked", reason: "active-guess-control", round: newlyResolved.roundNumber }), 2500);
+    } else if (!latest) {
+      diagnostic("popup-decision", duelDiagnostic({ action: "none", reason: "no-resolved-round" }), 3000);
+    }
     return latest;
   }
 
   async function processClassic(payload) {
     if (duelPath() || !capture) return null;
     const initial = capture.selectClassic(payload);
-    const token = initial.token || classicToken(payload) || classicState.token || tokenFromUrl();
+    const pageToken = tokenFromUrl();
+    const payloadToken = initial.token || classicToken(payload);
+    if (pageToken && payloadToken && pageToken !== payloadToken) {
+      diagnostic("classic-reject", { reason: "stale-game-token", page: pageToken.slice(-10), payload: payloadToken.slice(-10) }, 3000, `${pageToken}|${payloadToken}`);
+      return null;
+    }
+    const token = pageToken || payloadToken || classicState.token;
     if (!token || !resultVisible()) return null;
     classicState.token = token;
 
-    const wantedRound = Math.max(initial.roundNumber, visibleRoundNumber());
+    const wantedRound = visibleRoundNumber() || initial.roundNumber;
     const earlySubmission = submittedClassicGuess(token, wantedRound);
     const earlyFrame = capture.selectClassic(payload, [], earlySubmission);
     const needsDetails = !earlyFrame.round || !earlyFrame.guess ||
@@ -1679,8 +1968,22 @@
     const guessedMeta = await geoMeta(guessedPoint);
     let actual = code(round) || actualMeta.countryCode;
     let guessed = code(guess) || code(guess?.guess) || guessedMeta.countryCode;
-    if (!actual || !guess) return null;
-    if (!guessed && !noGuess(guess)) return null;
+    if (!actual || !guess) {
+      diagnostic("classic-reject", { reason: !actual ? "target-unresolved" : "guess-missing", token: token.slice(-10), wantedRound, frameRound: roundNumber });
+      return null;
+    }
+    if (!guessed && !noGuess(guess)) {
+      diagnostic("classic-reject", { reason: "guess-country-unresolved", token: token.slice(-10), round: roundNumber });
+      return null;
+    }
+    diagnostic("classic-frame", {
+      token: token.slice(-10),
+      round: roundNumber,
+      actual,
+      guessed,
+      score: score(guess),
+      distance: distance(guess) || Math.round(metersBetween(actualPoint, guessedPoint))
+    });
     const saved = await save({
       gameId: token,
       roundNumber,
@@ -1701,9 +2004,15 @@
 
   function rememberDuelParts(root) {
     if (!root || typeof root !== "object") return;
+    const before = { game: duelState.id, teams: duelState.teams?.length || 0, rounds: duelState.rounds?.length || 0, guesses: duelState.guesses.size };
     const loose = capture?.collectDuelFragments(root) || { id: "", teams: [], rounds: [] };
     const snapshots = duelSnapshots(root);
-    const id = loose.id || snapshots.map(gameId).find(Boolean) || gameId(root);
+    const hasGameState = Boolean(loose.teams.length || loose.rounds.length || snapshots.length);
+    const observedId = loose.id || snapshots.map(gameId).find(Boolean) || gameId(root);
+    const id = hasGameState ? observedId : "";
+    if (observedId && !hasGameState && observedId !== duelState.id) {
+      diagnostic("duel-id-ignored", duelDiagnostic({ candidate: String(observedId).slice(-12), reason: "id-without-game-state", rootKeys: Object.keys(root).slice(0, 24) }), 3000, String(observedId));
+    }
     if (id && duelState.id && id !== duelState.id) {
       resetDuelState(id);
     }
@@ -1714,6 +2023,8 @@
     for (const snapshot of snapshots) {
       duelState.teams = mergeArray(duelState.teams, snapshot.teams);
       duelState.rounds = mergeArray(duelState.rounds, snapshot.rounds);
+      duelState.currentRoundNumber = n(snapshot.currentRoundNumber, duelState.currentRoundNumber);
+      duelState.status = String(snapshot.status || duelState.status || "");
       rememberTeamGuesses(myTeam(snapshot.teams));
     }
     rememberTeamGuesses(myTeam(duelState.teams));
@@ -1724,6 +2035,13 @@
       identifyMeByPin(duelState.teams, duelState.latestGuess.value);
     }
     if (fragments.teams.length || fragments.rounds.length || snapshots.length) duelState.lastUpdate = Date.now();
+    diagnostic("duel-ingest", duelDiagnostic({
+      before: { game: String(before.game || "").slice(-12), teams: before.teams, rounds: before.rounds, guesses: before.guesses },
+      rootKeys: Object.keys(root).slice(0, 32),
+      loose: { game: String(loose.id || "").slice(-12), teams: loose.teams.length, rounds: loose.rounds.length },
+      fragments: { teams: fragments.teams.length, rounds: fragments.rounds.length },
+      snapshots: snapshots.length
+    }), 3000, `${String(id || "").slice(-12)}|${duelState.teams?.length || 0}|${duelState.rounds?.length || 0}|${duelState.guesses.size}|${Object.keys(root).slice(0, 20).join(",")}`);
   }
 
   function identifyMeByPin(teams, submittedGuess) {
@@ -1748,6 +2066,7 @@
     if (!replay) cache.unshift(payload);
     cache.length = Math.min(cache.length, 24);
     if (duelPath()) {
+      diagnostic("payload-received", duelDiagnostic({ replay, keys: Object.keys(payload).slice(0, 32) }), 3000, `${replay}|${Object.keys(payload).slice(0, 24).join(",")}`);
       rememberDuelParts(payload);
       let id = getActiveGameId();
       if (resultVisible()) id = (await discoverOngoingDuel()) || id;
@@ -1823,6 +2142,11 @@
 
   window.addEventListener("message", event => {
     if (!isContextValid() || event.source !== window) return;
+    syncRouteContext();
+    if (event.data?.source === "GG_STUDY_DIAGNOSTIC") {
+      diagnostic(`probe:${String(event.data.event || "event").slice(0, 60)}`, event.data.data || {}, 0);
+      return;
+    }
     if (event.data?.source === "GG_STUDY_FETCH_RESULT") {
       const resolve = pageRequests.get(String(event.data.requestId || ""));
       if (!resolve) return;
@@ -1832,13 +2156,25 @@
     }
     if (event.data?.source !== "GG_STUDY_PROBE") return;
 
+    diagnostic("probe-payload", {
+      path: (() => { try { return new URL(event.data.url, location.href).pathname; } catch (e) { return String(event.data.url || "").split("?")[0]; } })(),
+      direction: event.data.direction || "response",
+      method: event.data.method || "",
+      keys: event.data.payload && typeof event.data.payload === "object" ? Object.keys(event.data.payload).slice(0, 32) : []
+    }, 2500, `${event.data.direction}|${event.data.method}|${String(event.data.url).split("?")[0]}|${Object.keys(event.data.payload || {}).slice(0, 24).join(",")}`);
+
     const id = duelIdFromUrl(event.data.url);
-    if (id && duelPath()) {
+    const observed = capture?.collectDuelFragments(event.data.payload) || { teams: [], rounds: [] };
+    const highConfidenceId = event.data.direction === "request" || observed.teams.length || observed.rounds.length || duelSnapshots(event.data.payload).length;
+    if (id && duelPath() && highConfidenceId) {
       if (duelState.id && duelState.id !== id) resetDuelState(id);
       else duelState.id = id;
+    } else if (id && duelPath()) {
+      diagnostic("duel-id-ignored", duelDiagnostic({ candidate: String(id).slice(-12), reason: "url-without-game-state" }), 3000, String(id));
     }
     const token = !duelPath() ? tokenFromUrl(event.data.url) : "";
-    if (token) classicState.token = token;
+    const pageToken = !duelPath() ? tokenFromUrl() : "";
+    if (token && (!pageToken || token === pageToken)) classicState.token = token;
     if (event.data.direction === "request") {
       rememberSubmittedGuess(event.data.url, event.data.payload);
       return;
@@ -1846,16 +2182,40 @@
     processPayload(event.data.payload);
   });
 
+  syncRouteContext();
   fetchMe();
+  diagnostic("content-boot", {
+    build: "1.12.0",
+    path: cleanPath().slice(0, 120),
+    userAgent: String(globalThis.navigator?.userAgent || "unknown").slice(0, 220),
+    language: globalThis.navigator?.language || "unknown",
+    runtime: Boolean(chrome.runtime?.id),
+    storage: Boolean(chrome.storage?.local)
+  });
+  window.postMessage({ source: "GG_STUDY_DIAGNOSTIC_PING" }, window.location.origin);
 
+  let lastHeartbeatAt = 0;
   setInterval(() => {
     if (!isContextValid()) {
       const el = document.getElementById("ggs-overlay-panel");
       if (el) el.style.display = "none";
       return;
     }
+    syncRouteContext();
     loadMe();
     manageProfileImporter();
+
+    if (duelPath() && Date.now() - lastHeartbeatAt > 5000) {
+      lastHeartbeatAt = Date.now();
+      diagnostic("heartbeat", duelDiagnostic({
+        gamePath: gamePath(),
+        resultVisible: resultVisible(),
+        activeGuess: activeGuessVisible(),
+        pageRequests: pageRequests.size,
+        cache: cache.length,
+        lastUpdateAgo: duelState.lastUpdate ? Date.now() - duelState.lastUpdate : null
+      }));
+    }
 
     if (!gamePath()) {
       const el = document.getElementById("ggs-overlay-panel");
@@ -1864,7 +2224,8 @@
     }
 
     const result = resultVisible();
-    const duelGrace = duelPath() && Date.now() < duelState.revealUntil && !activeGuessVisible();
+    const liveDuelRound = duelPath() && duelRoundInProgress();
+    const duelGrace = duelPath() && !liveDuelRound && Date.now() < duelState.revealUntil && !activeGuessVisible();
     if (duelPath()) {
       const id = getActiveGameId();
       if (!id) discoverOngoingDuel();
@@ -1876,9 +2237,10 @@
       if (duelState.teams && duelState.rounds) processDuel(duelState);
     }
 
-    if (!result && !duelGrace) {
+    if (liveDuelRound || !result && !duelGrace) {
       const el = document.getElementById("ggs-overlay-panel");
       if (el) el.style.display = "none";
+      if (liveDuelRound) duelState.revealUntil = 0;
       return;
     }
 

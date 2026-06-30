@@ -61,6 +61,7 @@ function loadProbe() {
     Blob,
     FormData,
     TextDecoder,
+    performance,
     console,
     setTimeout,
     clearTimeout,
@@ -139,4 +140,26 @@ test("page probe extracts the live Duel from React state without network hooks",
   assert.equal(result.payload.gameId, "duel-react");
   assert.equal(result.payload.currentPlayer.playerId, "me");
   assert.equal(result.payload.teams[0].players[0].guesses[0].score, 4100);
+});
+
+test("page probe walks down from the React root after multiplayer UI class changes", () => {
+  const probe = loadProbe();
+  const game = {
+    gameId: "duel-root-tree",
+    currentRoundNumber: 3,
+    status: "Started",
+    teams: [{ id: "one", players: [], roundResults: [] }, { id: "two", players: [], roundResults: [] }],
+    rounds: [{ roundNumber: 3, panorama: { countryCode: "ca" } }]
+  };
+  const child = { memoizedProps: { activeGame: { game, derivedProps: { currentPlayer: { playerId: "me" } } } }, pendingProps: null, memoizedState: null, child: null, sibling: null };
+  const root = { memoizedProps: null, pendingProps: null, memoizedState: null, child, sibling: null };
+  const element = {};
+  element["__reactContainer$roundscout"] = root;
+  probe.elements.push(element);
+
+  probe.intervals.at(-1)();
+
+  const result = probe.messages.find(item => item.url === "react://duel-state");
+  assert.equal(result.payload.gameId, "duel-root-tree");
+  assert.equal(result.payload.currentRoundNumber, 3);
 });

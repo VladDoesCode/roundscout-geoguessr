@@ -49,6 +49,16 @@ test("Duel capture rejects fragments from a stale match", () => {
   assert.equal(result.id, "");
 });
 
+test("Duel capture ignores match ids found only in competitive metadata", () => {
+  const result = capture.collectDuelFragments({
+    currentSet: { completedSets: [{ latestGameId: "old-match" }], games: [{ gameId: "old-match" }] }
+  });
+
+  assert.equal(result.id, "");
+  assert.deepEqual(result.teams, []);
+  assert.deepEqual(result.rounds, []);
+});
+
 test("Duel capture preserves separately stored round score and player pin", () => {
   const result = capture.collectDuelFragments({
     gameId: "duel-live",
@@ -62,6 +72,19 @@ test("Duel capture preserves separately stored round score and player pin", () =
   assert.equal(result.teams[0][0].players[0].pin.lat, 41.01);
   assert.equal(result.teams[0][0].roundResults[0].score, 4200);
   assert.equal(result.rounds[0][0].panorama.lng, 29.1);
+});
+
+test("Duel lifecycle detects the next active round before stale result markup disappears", () => {
+  const teams = [
+    { roundResults: [{ roundNumber: 1, score: 4200 }] },
+    { roundResults: [{ roundNumber: 1, score: 3900 }] }
+  ];
+
+  assert.equal(capture.duelRoundInProgress(1, teams), false);
+  assert.equal(capture.duelRoundInProgress(2, teams), true);
+  teams[0].roundResults.push({ roundNumber: 2, score: 3500 });
+  teams[1].roundResults.push({ roundNumber: 2, score: 3600 });
+  assert.equal(capture.duelRoundInProgress(2, teams), false);
 });
 
 test("Duel payload driver does not leak fragment locals into another function", () => {
