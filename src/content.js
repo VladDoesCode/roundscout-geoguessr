@@ -1,4 +1,4 @@
-﻿(() => {
+(() => {
   "use strict";
 
   if (window.__ggStudyLoaded) return;
@@ -9,7 +9,7 @@
   const geoMemo = new Map();
   const guideMemo = new Map();
   const memoryStore = { ggStudyRounds: [] };
-  const duelState = { id: "", teams: null, rounds: null, guesses: new Map(), completed: new Set(), lastFetch: 0, lastUpdate: 0, revealUntil: 0 };
+  const duelState = { id: "", teams: null, rounds: null, guesses: new Map(), completed: new Set(), lastFetch: 0, lastUpdate: 0, revealUntil: 0, latestGuess: null };
   const classicState = { token: "", submissions: new Map(), latestSubmission: null, details: new Map(), fetching: new Map(), lastFetch: new Map() };
   const pageRequests = new Map();
   const capture = window.RoundScoutCapture;
@@ -501,7 +501,7 @@
 
   function hasScore(value) {
     if (!value || typeof value !== "object") return false;
-    if (value.noGuess || value.isNoGuess || value.noGuessMade || value.didNotGuess || value.hasGuess === false || value.timedOut || value.timedout || value.isTimedOut) return true;
+    if (noGuess(value)) return true;
     return [
       value.score,
       value.points,
@@ -759,7 +759,8 @@
             countryCode: cc(data.countryCode),
             region: data.principalSubdivision || data.locality || data.city || ""
           };
-          geoMemo.set(key, result);
+          // Only cache successful lookups; a transient bigdatacloud failure should not poison every later round.
+          if (result.countryCode || result.region) geoMemo.set(key, result);
           resolve(result);
         });
       } catch (err) {
@@ -1031,6 +1032,7 @@
     duelDiscoveryLoading = true;
     try {
       const urls = [
+        `${location.origin}/api/duels/ongoing`,
         "https://game-server.geoguessr.com/api/duels/ongoing",
         `${location.origin}/api/v4/duels/ongoing`
       ];
@@ -1105,13 +1107,19 @@
   }
 
   function mine(value) {
-    return Boolean(value && ((me.id && ids(value).includes(me.id)) || (me.name && names(value).includes(me.name))));
+    return Boolean(value && (
+      (me.id && ids(value).includes(me.id)) ||
+      (me.name && names(value).includes(me.name)) ||
+      value.isMe === true || value.isViewer === true || value.isCurrentUser === true ||
+      value.isSelf === true || value.isLocalPlayer === true
+    ));
   }
 
   function myTeam(teams) {
     if (!Array.isArray(teams) || !teams.length) return null;
     if (teams.length === 1) return teams[0];
-    return teams.find(team => mine(team) || team.isMe || team.isCurrentUser || (team.players || []).some(player => mine(player) || player.isMe || player.isCurrentUser)) || null;
+    return teams.find(team => mine(team) || team.isMe || team.isViewer || team.isCurrentUser || team.isSelf || team.isLocalPlayer ||
+      (team.players || []).some(player => mine(player) || player.isMe || player.isViewer || player.isCurrentUser || player.isSelf || player.isLocalPlayer)) || null;
   }
 
   function teamPlayers(team) {
@@ -1209,10 +1217,12 @@
   }
 
   function noGuess(value) {
-    return Boolean(value && (
-      value.noGuess || value.isNoGuess || value.noGuessMade || value.didNotGuess ||
-      value.hasGuess === false || value.timedOut || value.timedout || value.isTimedOut
-    ));
+    if (!value || typeof value !== "object") return false;
+    // Strict boolean checks so a serialized "false" string or 0/1 flag cannot fake a no-guess.
+    return Boolean(
+      value.noGuess === true || value.isNoGuess === true || value.noGuessMade === true || value.didNotGuess === true ||
+      value.hasGuess === false || value.timedOut === true || value.timedout === true || value.isTimedOut === true
+    );
   }
 
   function submissionKey(token, roundNumber) {
@@ -1229,7 +1239,9 @@
       const id = duelIdFromUrl(url) || gameId(payload);
       if (id && duelState.id && id !== duelState.id) resetDuelState(id);
       else if (id) duelState.id = id;
-      rememberGuess(roundNumber || duelState.rounds?.length || 1, candidate);
+      const storeRound = roundNumber || duelState.rounds?.length || 1;
+      rememberGuess(storeRound, candidate);
+      duelState.latestGuess = { value: candidate, at: Date.now() };
       return;
     }
 
@@ -1259,6 +1271,7 @@
     duelState.lastFetch = 0;
     duelState.lastUpdate = 0;
     duelState.revealUntil = 0;
+    duelState.latestGuess = null;
   }
 
   function getActiveGameId() {
@@ -1351,15 +1364,37 @@
         const pinRound = roundNo(pin, 0);
         if (pin && (pinRound ? pinRound === index + 1 : index === (duelState.rounds?.length || 1) - 1)) out.push(pin);
       }
+    } else if (Array.isArray(teams) && teams.length) {
+      // Identity not resolved yet: surface every team's results and pins so coordinate matching can attribute the guess.
+      for (const anyTeam of teams) {
+        if (!anyTeam) continue;
+        for (const pool of guessPools(anyTeam)) pushGuessPool(out, pool, index, false, false);
+        for (const player of teamPlayers(anyTeam)) {
+          for (const pool of guessPools(player)) pushGuessPool(out, pool, index, false, false);
+          const pin = playerPinGuess(player, 0);
+          if (pin) out.push(pin);
+        }
+      }
     }
     const banked = duelState.guesses.get(index + 1);
     if (banked) out.push(banked);
+    // Include every banked pin in case the submission landed under the wrong round index (rounds not yet loaded).
+    duelState.guesses.forEach((guess) => { if (guess && guess !== banked) out.push(guess); });
     return out.filter(Boolean);
+  }
+
+  function pointsSame(a, b) {
+    if (!a || !b) return false;
+    return metersBetween(a, b) <= 25;
   }
 
   function compatibleGuess(base, candidate) {
     if (!base || !candidate || base === candidate) return false;
     if (!guessCoords(candidate) && !code(candidate)) return false;
+    // Same map pin = same guess, even when the player identity could not be resolved.
+    const basePoint = guessCoords(base);
+    const candidatePoint = guessCoords(candidate);
+    if (basePoint && candidatePoint && pointsSame(basePoint, candidatePoint)) return true;
     const baseScore = score(base);
     const candidateScore = score(candidate);
     const baseDistance = distance(base);
@@ -1372,9 +1407,38 @@
   function enrichGuess(base, round, teams, index) {
     if (!base) return null;
     let merged = base;
-    for (const candidate of guessDetailCandidates(round, teams, index)) {
+    const candidates = guessDetailCandidates(round, teams, index);
+
+    // Phase 1: standard compatible merge (coords / score / identity matching)
+    for (const candidate of candidates) {
       if (compatibleGuess(merged, candidate)) merged = mergeGuess(merged, candidate);
     }
+
+    // Phase 2: complementary merge.
+    // In duels the player pin (lat/lng, no score) and the round result (score, no coords)
+    // arrive as separate objects that compatibleGuess cannot join.  When we still lack
+    // coords or score, scan the candidates for the missing piece.
+    const mergedPoint = guessCoords(merged);
+    const needsCoords = !mergedPoint;
+    const needsScore = !hasNumericScore(merged) && !hasDistance(merged);
+    if (needsCoords || needsScore) {
+      const team = myTeam(teams);
+      for (const candidate of candidates) {
+        if (candidate === merged) continue;
+        const candidatePoint = guessCoords(candidate);
+        // Skip candidates whose coords conflict with what we already have.
+        if (mergedPoint && candidatePoint && !pointsSame(mergedPoint, candidatePoint)) continue;
+        const givesCoords = needsCoords && candidatePoint;
+        const givesScore = needsScore && (hasNumericScore(candidate) || hasDistance(candidate));
+        if (!givesCoords && !givesScore) continue;
+        // When identity is resolved, all candidates already belong to my team.
+        // When unresolved, only accept coord-bearing candidates (pin) or score-only
+        // candidates whose value is consistent with the base.
+        merged = mergeGuess(merged, candidate);
+        if (!needsCoords || guessCoords(merged)) break;
+      }
+    }
+
     return merged;
   }
 
@@ -1386,6 +1450,13 @@
   function rememberTeamGuesses(team) {
     if (!team) return;
     const ownTeamMode = teamHasMultiplePlayers(team);
+    // Determine the most-recently completed round from this team's results so the
+    // live pin is banked under the SAME round number as its score.  Using
+    // duelState.rounds.length (total rounds) put the pin under the wrong key.
+    const teamResults = guessPools(team).flat();
+    const maxResultRound = teamResults.map(g => roundNo(g, 0)).filter(Boolean).reduce((max, r) => Math.max(max, r), 0);
+    const pinFallbackRound = maxResultRound || duelState.rounds?.length || 1;
+
     for (const pool of guessPools(team)) {
       pool.forEach((guess, index) => {
         if (!ownTeamMode || mine(guess)) rememberGuess(roundNo(guess, index + 1), guess);
@@ -1394,8 +1465,8 @@
     const players = ownTeamMode ? ownPlayers(team) : teamPlayers(team);
     for (const player of players) {
       for (const pool of guessPools(player)) pool.forEach((guess, index) => rememberGuess(roundNo(guess, index + 1), guess));
-      const pin = playerPinGuess(player, duelState.rounds?.length || 1);
-      if (pin) rememberGuess(roundNo(pin, duelState.rounds?.length || 1), pin);
+      const pin = playerPinGuess(player, pinFallbackRound);
+      if (pin) rememberGuess(roundNo(pin, pinFallbackRound), pin);
     }
   }
 
@@ -1434,7 +1505,20 @@
       if (fromTeam) return mergeGuess(fromTeam, banked);
     }
 
-    return banked || null;
+    if (banked) return banked;
+    // Fall back to the most recently submitted pin (it may have been banked before the round index was known).
+    if (duelState.latestGuess && Date.now() - duelState.latestGuess.at < 180000) {
+      return duelState.latestGuess.value;
+    }
+    // Last resort: pull a player pin directly from the teams (handles the case
+    // where the submission wasn't captured but the WebSocket state includes it).
+    if (team) {
+      for (const player of teamPlayers(team)) {
+        const pin = playerPinGuess(player, index + 1);
+        if (pin) return pin;
+      }
+    }
+    return null;
   }
 
   function roundGuesses(round) {
@@ -1527,10 +1611,7 @@
       if (!actual) continue;
 
       const guessedMeta = await geoMeta(guessedPoint);
-      let guessed = code(playerGuess) || code(playerGuess.guess);
-      if (!guessed && !playerGuess.noGuess) {
-        guessed = guessedMeta.countryCode;
-      }
+      let guessed = code(playerGuess) || code(playerGuess.guess) || guessedMeta.countryCode;
       if (!guessed && !noGuess(playerGuess)) continue;
       
       const baseDamage = getRoundDamage(round, activeTeams, i, playerGuess);
@@ -1557,6 +1638,8 @@
       }
     }
     
+    // A newly scored round is the authoritative reveal signal. GeoGuessr can leave
+    // stale result controls in the DOM, so resultVisible() is intentionally not required.
     if (newlyResolved && !activeGuessVisible()) {
       duelState.revealUntil = Date.now() + 15000;
       show(newlyResolved);
@@ -1585,11 +1668,17 @@
     const frame = capture.selectClassic(payload, details, submitted);
     const { roundNumber, round, guess } = frame;
     const actualPoint = correctCoords(round);
-    const guessedPoint = guessCoords(guess);
+    let guessedPoint = guessCoords(guess);
+    // Recover the pin when the API guess slot lacks coordinates (GeoGuessr sometimes omits lat/lng from the result payload).
+    if (!guessedPoint && submitted) guessedPoint = guessCoords(submitted);
+    if (!guessedPoint && round) {
+      const roundPin = roundGuesses(round).map(guessCoords).find(Boolean);
+      if (roundPin) guessedPoint = roundPin;
+    }
     const actualMeta = await geoMeta(actualPoint);
     const guessedMeta = await geoMeta(guessedPoint);
     let actual = code(round) || actualMeta.countryCode;
-    let guessed = code(guess) || guessedMeta.countryCode;
+    let guessed = code(guess) || code(guess?.guess) || guessedMeta.countryCode;
     if (!actual || !guess) return null;
     if (!guessed && !noGuess(guess)) return null;
     const saved = await save({
@@ -1629,7 +1718,27 @@
     }
     rememberTeamGuesses(myTeam(duelState.teams));
     rememberLooseGuesses(root);
+    // If identity is still unresolved, try to learn it by matching the submitted
+    // guess pin to a player pin in the duel state.
+    if (!me.id && !me.name && duelState.latestGuess) {
+      identifyMeByPin(duelState.teams, duelState.latestGuess.value);
+    }
     if (fragments.teams.length || fragments.rounds.length || snapshots.length) duelState.lastUpdate = Date.now();
+  }
+
+  function identifyMeByPin(teams, submittedGuess) {
+    const pin = guessCoords(submittedGuess);
+    if (!pin || !Array.isArray(teams)) return;
+    for (const team of teams) {
+      if (!team) continue;
+      for (const player of teamPlayers(team)) {
+        const playerPin = playerPinGuess(player, 0);
+        if (playerPin && pointsSame(guessCoords(playerPin), pin)) {
+          remember(player);
+          return;
+        }
+      }
+    }
   }
 
   async function processPayload(payload, replay = false) {
@@ -1762,7 +1871,9 @@
       if (id && (!duelState.teams || !duelState.rounds || ((result || duelGrace) && Date.now() - duelState.lastFetch > 1800))) {
         fetchDuelState(id);
       }
-      if ((result || duelGrace) && duelState.teams && duelState.rounds) processDuel(duelState);
+      // Always process duel state for saving — even when the result screen has
+      // already passed.  processDuel internally gates the popup on result visibility.
+      if (duelState.teams && duelState.rounds) processDuel(duelState);
     }
 
     if (!result && !duelGrace) {

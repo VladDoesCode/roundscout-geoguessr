@@ -35,16 +35,23 @@
     for (const item of supplemental) gameStates(item, states);
     if (!states.length && primary && typeof primary === "object") states.push(primary);
 
-    const roundNumbers = [];
+    // Prefer explicit round indicators (state.round / currentRoundNumber / roundNumber) over player.guesses.length,
+    // because the guesses array can be longer than the current round when GeoGuessr pre-allocates future slots.
+    const explicitRounds = [];
+    const implicitRounds = [];
     for (const state of states) {
-      for (const value of [state.round, state.currentRoundNumber, state.roundNumber, state.player?.guesses?.length]) {
+      for (const value of [state.round, state.currentRoundNumber, state.roundNumber]) {
         const number = Number(value);
-        if (Number.isFinite(number) && number > 0) roundNumbers.push(number);
+        if (Number.isFinite(number) && number > 0) explicitRounds.push(number);
       }
+      const guessesLength = Number(state.player?.guesses?.length);
+      if (Number.isFinite(guessesLength) && guessesLength > 0) implicitRounds.push(guessesLength);
     }
     const submittedRound = Number(submittedGuess?.roundNumber ?? submittedGuess?.round);
-    if (Number.isFinite(submittedRound) && submittedRound > 0) roundNumbers.push(submittedRound);
-    const roundNumber = Math.max(1, ...roundNumbers);
+    if (Number.isFinite(submittedRound) && submittedRound > 0) explicitRounds.push(submittedRound);
+    const roundNumber = explicitRounds.length
+      ? Math.max(...explicitRounds)
+      : (implicitRounds.length ? Math.max(...implicitRounds) : 1);
     const index = roundNumber - 1;
     let round = null;
     let guess = null;

@@ -238,4 +238,117 @@
       }
     });
   }
+
+  const reactVersions = new Map();
+  let reactAnchor = null;
+
+  function duelContext(value, seen = new WeakSet(), depth = 0) {
+    if (!value || typeof value !== "object" || seen.has(value) || depth > 7 || value.nodeType) return null;
+    seen.add(value);
+    const game = value.game;
+    if (game?.gameId && Array.isArray(game.teams) && Array.isArray(game.rounds)) {
+      return { game, derived: value.derivedProps || null };
+    }
+    if (value.gameId && Array.isArray(value.teams) && Array.isArray(value.rounds)) {
+      return { game: value, derived: null };
+    }
+
+    const preferred = [
+      value.activeGame,
+      value.value,
+      value.memoizedState,
+      value.baseState,
+      value.lastRenderedState,
+      value.state,
+      value.data,
+      value.payload
+    ];
+    for (const child of preferred) {
+      const found = duelContext(child, seen, depth + 1);
+      if (found) return found;
+    }
+    if (depth < 4) {
+      for (const child of Object.values(value).slice(0, 80)) {
+        const found = duelContext(child, seen, depth + 1);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  function inspectFiber(fiber) {
+    const seenFibers = new Set();
+    for (let current = fiber, depth = 0; current && depth < 45 && !seenFibers.has(current); current = current.return, depth += 1) {
+      seenFibers.add(current);
+      for (const value of [current.memoizedProps, current.pendingProps, current.memoizedState]) {
+        const found = duelContext(value);
+        if (found) return found;
+      }
+      let hook = current.memoizedState;
+      for (let index = 0; hook && typeof hook === "object" && index < 30; hook = hook.next, index += 1) {
+        const found = duelContext(hook.memoizedState) || duelContext(hook.baseState) || duelContext(hook.queue?.lastRenderedState);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  function reactDuelSnapshot(context) {
+    const game = context?.game;
+    if (!game) return null;
+    const derived = context.derived || {};
+    const snapshot = {
+      gameId: game.gameId,
+      teams: game.teams,
+      rounds: game.rounds,
+      currentRoundNumber: game.currentRoundNumber,
+      status: game.status,
+      options: game.options,
+      result: game.result,
+      currentPlayer: derived.currentPlayer,
+      playerTeam: derived.playerTeam,
+      opponentTeam: derived.opponentTeam
+    };
+    try { return JSON.parse(JSON.stringify(snapshot)); } catch (e) { return null; }
+  }
+
+  function reactDuelVersion(snapshot) {
+    const teamProgress = (snapshot.teams || []).map(team => [
+      team.id,
+      (team.roundResults || []).length,
+      (team.roundResults || []).at(-1)?.score,
+      (team.players || []).map(player => [player.playerId, (player.guesses || []).length, (player.guesses || []).at(-1)?.score])
+    ]);
+    return JSON.stringify([snapshot.currentRoundNumber, snapshot.status, snapshot.rounds?.length, teamProgress]);
+  }
+
+  function scanReactDuelState() {
+    if (!/\/(?:multiplayer|duels?|team-duels)(?:\/|$)/i.test(location.pathname)) return;
+    const elements = [...new Set([
+      reactAnchor?.isConnected === false ? null : reactAnchor,
+      document.getElementById("__next"),
+      ...document.querySelectorAll('[class*="duel" i], [class*="round" i], [class*="game" i], [class*="result" i], [data-qa]')
+    ].filter(Boolean))].slice(0, 300);
+
+    try {
+      for (const element of elements) {
+        let context = null;
+        for (const key of Object.getOwnPropertyNames(element)) {
+          if (key.startsWith("__reactProps$")) context = duelContext(element[key]);
+          else if (key.startsWith("__reactFiber$") || key.startsWith("__reactContainer$")) context = inspectFiber(element[key]);
+          if (context) break;
+        }
+        const snapshot = reactDuelSnapshot(context);
+        if (!snapshot?.gameId) continue;
+        reactAnchor = element;
+        const version = reactDuelVersion(snapshot);
+        if (reactVersions.get(snapshot.gameId) === version) return;
+        reactVersions.set(snapshot.gameId, version);
+        emit("react://duel-state", snapshot);
+        return;
+      }
+    } catch (e) {}
+  }
+
+  setInterval(scanReactDuelState, 700);
 })();

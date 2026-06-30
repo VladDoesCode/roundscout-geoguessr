@@ -5,7 +5,7 @@ const fs = require("node:fs");
 test("manifest references existing extension files", () => {
   const manifest = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "1.11.2");
+  assert.equal(manifest.version, "1.11.3");
   const files = [
     manifest.background.service_worker,
     manifest.options_page,
